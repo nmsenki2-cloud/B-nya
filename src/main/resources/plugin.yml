@@ -1,0 +1,15 @@
+name: BanyaXP
+version: 3.1
+main: hu.banya.BanyaPlugin
+api-version: "1.21"
+description: Banyasz es favago szintrendszer, zonak es Vault penz
+depend: [Vault]
+commands:
+  banya:
+    description: Banyasz rendszer
+    usage: /banya [mine|pvpmine|tool|setmine|setregion]
+    aliases: [banyasz]
+permissions:
+  banya.admin:
+    description: Admin parancsok es szintkovetelmeny kihagyasa
+    default: op
