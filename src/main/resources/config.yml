@@ -1,0 +1,100 @@
+# ---------------------------------------------------------
+# Fő szint (rendes szint)
+# Összes XP az L. szinthez = level-xp-base * L * (L+1) / 2
+# (40-nel: 5. szint = 600 XP, 15. szint = 4800 XP)
+# ---------------------------------------------------------
+level-xp-base: 40
+
+# Ennyi fő XP jár egy kivágott fáért
+wood-main-xp: 2
+
+# true: XP és pénz CSAK a zónákban jár (fa: wood zóna, érc: safe/pvp zóna)
+# false: XP bárhol jár, de pénz csak a zónákban
+zones-only: true
+
+# A balta a fákon kívül a leveleket is törheti?
+axe-can-break-leaves: false
+
+# Pénz kiírása actionbarban (chatben soha nem jelez)
+show-money-actionbar: false
+
+# Szintkövetelmények
+requirements:
+  pickaxe-level: 5     # ettől a szinttől kap csákányt
+  safe-mine-level: 5   # PvP-mentes bánya
+  pvp-mine-level: 15   # PvP bánya
+
+# ---------------------------------------------------------
+# Pénz (Vault) blokkonként, a játékos fő szintje alapján
+# pénz = base + per-level * (szint - start-level)   (de legalább base)
+# max: felső határ, 0 = nincs határ
+#
+# wood: 100 (0-1. szint) ... 500 (5. szinten)
+# safe: 500 (5. szint)   ... 1500 (15. szinten)
+# pvp:  1500 (15. szint) ... szintenként +100, korlát nélkül
+# ---------------------------------------------------------
+money:
+  wood:
+    base: 100
+    per-level: 100
+    start-level: 1
+    max: 500
+  safe:
+    base: 500
+    per-level: 100
+    start-level: 5
+    max: 1500
+  pvp:
+    base: 1500
+    per-level: 100
+    start-level: 15
+    max: 0
+
+# ---------------------------------------------------------
+# Eszközök (balta, csákány) - külön szintrendszer
+# Szintlépéshez szükséges XP = xp-needed-base * jelenlegi szint
+# Egy blokkért kapott eszköz XP = xp-base + xp-per-level * (szint - 1)
+# ---------------------------------------------------------
+tools:
+  max-level: 100
+  xp-needed-base: 100
+  axe:
+    xp-base: 2
+    xp-per-level: 1
+  pickaxe:
+    xp-base: 2
+    xp-per-level: 1
+    area-level: 100   # ettől a csákány-szinttől 3x3-as területet bányász
+
+# Ennyi fő XP jár egy érc kibányászásáért
+ores:
+  COAL_ORE: 1
+  DEEPSLATE_COAL_ORE: 2
+  COPPER_ORE: 1
+  DEEPSLATE_COPPER_ORE: 2
+  IRON_ORE: 3
+  DEEPSLATE_IRON_ORE: 4
+  GOLD_ORE: 5
+  DEEPSLATE_GOLD_ORE: 6
+  NETHER_GOLD_ORE: 3
+  REDSTONE_ORE: 3
+  DEEPSLATE_REDSTONE_ORE: 4
+  LAPIS_ORE: 4
+  DEEPSLATE_LAPIS_ORE: 5
+  EMERALD_ORE: 10
+  DEEPSLATE_EMERALD_ORE: 12
+  DIAMOND_ORE: 15
+  DEEPSLATE_DIAMOND_ORE: 20
+  NETHER_QUARTZ_ORE: 2
+  ANCIENT_DEBRIS: 40
+
+# Jutalmak fő szintenként. %player% = a játékos neve.
+rewards:
+  3:
+    - "give %player% minecraft:bread 16"
+  15:
+    - "broadcast %player% elérte a 15. szintet, megnyílt a PvP bánya!"
+
+# A zónákat és a bánya belépési pontokat NE kézzel írd át:
+#   /banya setregion <wood|safe|pvp> <1|2>
+#   /banya setmine <safe|pvp>
