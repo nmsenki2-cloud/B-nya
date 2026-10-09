@@ -1,9 +1,10 @@
 name: BanyaXP
-version: 3.1
+version: 3.2
 main: hu.banya.BanyaPlugin
 api-version: "1.21"
-description: Banyasz es favago szintrendszer, zonak es Vault penz
+description: Banyasz es favago szintrendszer, zonak, Vault penz es PlaceholderAPI
 depend: [Vault]
+softdepend: [PlaceholderAPI]
 commands:
   banya:
     description: Banyasz rendszer
