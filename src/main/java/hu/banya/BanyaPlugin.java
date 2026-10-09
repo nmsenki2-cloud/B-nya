@@ -34,7 +34,6 @@ import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.ItemMeta;
-import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -55,9 +54,6 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
     private static final String[] ZONES = {"pvp", "safe", "wood"};
     private static final String[] ARMOR_PIECES = {"helmet", "chestplate", "leggings", "boots"};
 
-    /** Régi, összesített XP mentés (csak az átalakításhoz kell). */
-    private NamespacedKey legacyMainXpKey;
-    private NamespacedKey mainLevelKey;
     private NamespacedKey mainXpKey;
     private NamespacedKey toolKey;
     private Economy economy;
@@ -84,9 +80,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
     @Override
     public void onEnable() {
         saveDefaultConfig();
-        legacyMainXpKey = new NamespacedKey(this, "banya_xp");
-        mainLevelKey = new NamespacedKey(this, "main_level");
-        mainXpKey = new NamespacedKey(this, "main_xp");
+        mainXpKey = new NamespacedKey(this, "banya_xp");
         toolKey = new NamespacedKey(this, "banya_tool");
         getServer().getPluginManager().registerEvents(this, this);
         // A világok betöltése után töltjük be a zónákat
@@ -123,6 +117,17 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
 
     private String toolName(String type) {
         return type.equals("axe") ? "Balta" : "Csákány";
+    }
+
+    /** XP szorzó az adott zónára (nincs zóna = 1.0). */
+    private double zoneMultiplier(String zone) {
+        if (zone == null) return 1.0;
+        return getConfig().getDouble("xp-multiplier." + zone, 1.0);
+    }
+
+    /** Szorzott XP, legalább 1. */
+    private int scaled(int base, double mult) {
+        return Math.max(1, (int) Math.round(base * mult));
     }
 
     // =====================================================================
@@ -231,63 +236,42 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
     }
 
     // =====================================================================
-    //  Fő szint (rendes szint): szintlépéskor az XP nullázódik
+    //  Fő szint (rendes szint)
     // =====================================================================
 
-    /** Ennyi XP kell az adott szintről a következőre (szintenként nő). */
-    long mainXpNeeded(int level) {
-        double base = getConfig().getDouble("level-xp-base", 40);
-        double exp = getConfig().getDouble("level-xp-exponent", 1.0);
-        return Math.max(1L, Math.round(base * Math.pow(level + 1, exp)));
+    /** Ennyi összes XP kell az adott szint eléréséhez. */
+    long xpForLevel(int level) {
+        return (long) cfgInt("level-xp-base", 40) * level * (level + 1) / 2;
     }
 
-    /** Régi (összesített XP-s) mentés átalakítása szint + szinten belüli XP formára. */
-    private void migrateMain(Player p) {
-        PersistentDataContainer pdc = p.getPersistentDataContainer();
-        if (pdc.has(mainLevelKey, PersistentDataType.INTEGER)) return;
-
-        long old = pdc.getOrDefault(legacyMainXpKey, PersistentDataType.LONG, 0L);
-        long base = cfgInt("level-xp-base", 40);
+    private int levelFromXp(long xp) {
         int level = 0;
-        while (old >= base * (level + 1) * (level + 2) / 2) {
+        while (xp >= xpForLevel(level + 1)) {
             level++;
         }
-        long used = base * level * (level + 1) / 2;
-        pdc.set(mainLevelKey, PersistentDataType.INTEGER, level);
-        pdc.set(mainXpKey, PersistentDataType.LONG, old - used);
+        return level;
+    }
+
+    long getMainXp(Player p) {
+        return p.getPersistentDataContainer().getOrDefault(mainXpKey, PersistentDataType.LONG, 0L);
     }
 
     int getMainLevel(Player p) {
-        migrateMain(p);
-        return p.getPersistentDataContainer().getOrDefault(mainLevelKey, PersistentDataType.INTEGER, 0);
-    }
-
-    /** A jelenlegi szinten belül gyűjtött XP. */
-    long getMainXp(Player p) {
-        migrateMain(p);
-        return p.getPersistentDataContainer().getOrDefault(mainXpKey, PersistentDataType.LONG, 0L);
+        return levelFromXp(getMainXp(p));
     }
 
     /** Hozzáadja a fő XP-t, visszaadja az actionbar szövegrészletet. */
     private String addMainXp(Player p, int amount) {
-        int level = getMainLevel(p);
-        long xp = getMainXp(p) + amount;
+        long oldXp = getMainXp(p);
+        long newXp = oldXp + amount;
+        p.getPersistentDataContainer().set(mainXpKey, PersistentDataType.LONG, newXp);
 
-        boolean leveledUp = false;
-        if (xp >= mainXpNeeded(level)) {
-            level++;
-            xp = 0; // szintlépéskor az XP nullázódik
-            leveledUp = true;
+        int oldLevel = levelFromXp(oldXp);
+        int newLevel = levelFromXp(newXp);
+        for (int lvl = oldLevel + 1; lvl <= newLevel; lvl++) {
+            mainLevelUp(p, lvl);
         }
-
-        PersistentDataContainer pdc = p.getPersistentDataContainer();
-        pdc.set(mainLevelKey, PersistentDataType.INTEGER, level);
-        pdc.set(mainXpKey, PersistentDataType.LONG, xp);
-
-        if (leveledUp) {
-            mainLevelUp(p, level);
-        }
-        return "§6Szint §e+" + amount + " §7(" + xp + "/" + mainXpNeeded(level) + ")";
+        return "§6Szint §e+" + amount + " §7(" + newXp + "/" + xpForLevel(newLevel + 1) + ")";
     }
 
     private void mainLevelUp(Player p, int level) {
@@ -464,7 +448,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
 
         int baseGain = cfgInt("tools." + type + ".xp-base", 2)
                 + cfgInt("tools." + type + ".xp-per-level", 1) * (level - 1);
-        int gain = Math.max(1, (int) Math.round(baseGain * mult));
+        int gain = scaled(baseGain, mult);
         int xp = getToolXp(p, type) + gain;
 
         boolean leveledUp = false;
@@ -687,10 +671,9 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         Player victim = e.getEntity();
         Player killer = victim.getKiller();
         if (killer != null && !killer.equals(victim) && "pvp".equals(zoneAt(victim.getLocation()))) {
-            String msg = addArmorXp(killer, cfgInt("armor.kill-xp", 25));
-            if (!msg.isEmpty()) {
-                killer.sendActionBar(legacy(msg));
-            }
+            String main = addMainXp(killer, cfgInt("kill-main-xp", 20));
+            String armor = addArmorXp(killer, cfgInt("armor.kill-xp", 25));
+            killer.sendActionBar(legacy(armor.isEmpty() ? main : main + " §8| " + armor));
         }
 
         Iterator<ItemStack> it = e.getDrops().iterator();
@@ -762,4 +745,269 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         for (ItemStack drop : drops) {
             Map<Integer, ItemStack> left = p.getInventory().addItem(drop);
             for (ItemStack rest : left.values()) {
-                b.getWorld().dropItem
+                b.getWorld().dropItemNaturally(b.getLocation(), rest);
+                full = true;
+            }
+        }
+
+        if (getConfig().getBoolean("autopickup.pickup-exp", true) && e.getExpToDrop() > 0) {
+            p.giveExp(e.getExpToDrop());
+            e.setExpToDrop(0);
+        }
+
+        if (full) {
+            long now = System.currentTimeMillis();
+            Long last = lastFullMsg.get(p.getUniqueId());
+            if (last == null || now - last > 3000) {
+                lastFullMsg.put(p.getUniqueId(), now);
+                p.sendMessage("§cTele a táskád! A felesleg a földre esett.");
+            }
+        }
+    }
+
+    /** Magas szintű csákány: a kibányászott blokk körül 3x3-as területet szed ki. */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onAreaBreak(BlockBreakEvent e) {
+        if (areaBreaking) return;
+        Player p = e.getPlayer();
+        if (p.getGameMode() != GameMode.SURVIVAL) return;
+        if (!isTool(p.getInventory().getItemInMainHand(), "pickaxe")) return;
+        if (getToolLevel(p, "pickaxe") < cfgInt("tools.pickaxe.area-level", 100)) return;
+
+        Block center = e.getBlock();
+        RayTraceResult hit = p.rayTraceBlocks(6);
+        if (hit == null || hit.getHitBlock() == null || hit.getHitBlockFace() == null) return;
+        if (!hit.getHitBlock().equals(center)) return;
+        BlockFace face = hit.getHitBlockFace();
+
+        List<Block> targets = new ArrayList<>();
+        for (int a = -1; a <= 1; a++) {
+            for (int c = -1; c <= 1; c++) {
+                if (a == 0 && c == 0) continue;
+                int dx = 0, dy = 0, dz = 0;
+                switch (face) {
+                    case UP, DOWN -> { dx = a; dz = c; }
+                    case NORTH, SOUTH -> { dx = a; dy = c; }
+                    default -> { dy = a; dz = c; }
+                }
+                Block n = center.getRelative(dx, dy, dz);
+                Material nt = n.getType();
+                if (nt.isAir() || nt.getHardness() < 0) continue;
+                if (!Tag.MINEABLE_PICKAXE.isTagged(nt)) continue;
+                if (n.getState() instanceof TileState) continue; // láda, kemence, spawner stb. marad
+                targets.add(n);
+            }
+        }
+
+        areaBreaking = true;
+        try {
+            for (Block n : targets) {
+                p.breakBlock(n); // normál törés: védelem, XP és pénz is működik rá
+            }
+        } finally {
+            areaBreaking = false;
+        }
+    }
+
+    /** Jutalom: XP, eszköz XP, páncél XP és pénz. */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onBreak(BlockBreakEvent e) {
+        Player p = e.getPlayer();
+        if (p.getGameMode() != GameMode.SURVIVAL) return;
+
+        Block b = e.getBlock();
+        Material t = b.getType();
+        if (placedBlocks.remove(blockKey(b))) return;
+
+        boolean log = Tag.LOGS.isTagged(t);
+        int oreXp = log ? 0 : cfgInt("ores." + t.name(), 0);
+        if (!log && oreXp <= 0) return;
+
+        String zone = zoneAt(b.getLocation());
+        boolean zoneOk = zoneMatches(log, zone);
+        if (!zoneOk && getConfig().getBoolean("zones-only", true)) return;
+
+        double mult = zoneMultiplier(zone);
+        int levelBefore = getMainLevel(p);
+        String main;
+        String tool;
+        String armor = "";
+        if (log) {
+            main = addMainXp(p, scaled(cfgInt("wood-main-xp", 2), mult));
+            tool = gainToolXp(p, "axe", mult);
+        } else {
+            main = addMainXp(p, scaled(oreXp, mult));
+            tool = gainToolXp(p, "pickaxe", mult);
+            if ("pvp".equals(zone)) {
+                armor = addArmorXp(p, cfgInt("armor.ore-xp", 3));
+            }
+        }
+
+        String line = tool.isEmpty() ? main : main + " §8| " + tool;
+        if (!armor.isEmpty()) {
+            line += " §8| " + armor;
+        }
+
+        if (zoneOk) {
+            double money = moneyFor(zone, levelBefore);
+            if (money > 0) {
+                pay(p, money);
+                if (getConfig().getBoolean("show-money-actionbar", false)) {
+                    line += " §8| §a+$" + (long) money;
+                }
+            }
+        }
+        p.sendActionBar(legacy(line));
+    }
+
+    // =====================================================================
+    //  Parancsok
+    // =====================================================================
+
+    private void teleportToMine(Player p, String mine) {
+        int required = requiredLevel(mine);
+        int level = getMainLevel(p);
+        if (level < required && !p.hasPermission("banya.admin")) {
+            p.sendMessage("§cEhhez legalább §e" + required + ". §cszint kell! (Most: " + level + ")");
+            return;
+        }
+        Location loc = getConfig().getLocation("mines." + mine);
+        if (loc == null || loc.getWorld() == null) {
+            p.sendMessage("§cEz a bánya belépési pontja még nincs beállítva. (Admin: /banya setmine " + mine + ")");
+            return;
+        }
+        p.teleport(loc);
+        p.sendMessage(mine.equals("safe") ? "§aBelépsz a §bPvP-mentes bányába§a."
+                : "§cBelépsz a §4PvP bányába§c! Vigyázz!");
+    }
+
+    /** Diagnosztika: miért (nem) jár XP a célzott blokkra. */
+    private void sendDebug(Player p) {
+        p.sendMessage("§6--- BanyaXP debug ---");
+        boolean survival = p.getGameMode() == GameMode.SURVIVAL;
+        p.sendMessage("§eJátékmód: §f" + p.getGameMode() + (survival ? "" : " §c(csak SURVIVAL-ban jár XP!)"));
+        p.sendMessage("§ezones-only: §f" + getConfig().getBoolean("zones-only", true)
+                + " §7| zones-ignore-height: §f" + getConfig().getBoolean("zones-ignore-height", true));
+
+        if (regions.isEmpty()) {
+            p.sendMessage("§eBetöltött zónák: §cegy sem! §7(/banya setregion <wood|safe|pvp> <1|2>)");
+        } else {
+            for (Map.Entry<String, Region> en : regions.entrySet()) {
+                Region r = en.getValue();
+                p.sendMessage("§e" + en.getKey() + " zóna: §f" + r.world() + " §7" + r.minX() + "," + r.minY()
+                        + "," + r.minZ() + " -> " + r.maxX() + "," + r.maxY() + "," + r.maxZ()
+                        + " §8(szorzó: " + zoneMultiplier(en.getKey()) + ")");
+            }
+        }
+        String here = zoneAt(p.getLocation());
+        p.sendMessage("§eItt állsz, zóna: §f" + (here == null ? "nincs" : here));
+
+        ItemStack hand = p.getInventory().getItemInMainHand();
+        String handType = isTool(hand, "axe") ? "BanyaXP balta"
+                : isTool(hand, "pickaxe") ? "BanyaXP csákány" : "§cnem BanyaXP eszköz";
+        p.sendMessage("§eKezedben: §f" + handType);
+
+        Block target = p.getTargetBlockExact(6);
+        if (target == null) {
+            p.sendMessage("§7Nézz egy fára vagy ércre, és írd be újra a parancsot!");
+            return;
+        }
+        Material t = target.getType();
+        boolean log = Tag.LOGS.isTagged(t);
+        int oreXp = log ? 0 : cfgInt("ores." + t.name(), 0);
+        String zone = zoneAt(target.getLocation());
+        p.sendMessage("§eCélzott blokk: §f" + t.name() + " §7(zóna: " + (zone == null ? "nincs" : zone) + ")");
+
+        if (!log && oreXp <= 0) {
+            p.sendMessage("§cEz a blokk nem fa, és nincs az érc listában -> nem jár XP.");
+        } else if (placedBlocks.contains(blockKey(target))) {
+            p.sendMessage("§cEzt a blokkot játékos rakta le -> nem jár XP.");
+        } else if (!zoneMatches(log, zone) && getConfig().getBoolean("zones-only", true)) {
+            p.sendMessage("§cNincs a megfelelő zónában (fa: wood, érc: safe/pvp) -> nem jár XP.");
+        } else if (!survival) {
+            p.sendMessage("§cKreatív/más játékmódban nem jár XP.");
+        } else {
+            p.sendMessage("§aIde járna XP. Ha mégsem kapsz, akkor másik plugin (pl. WorldGuard) tiltja a törést.");
+        }
+    }
+
+    @Override
+    public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
+        if (!(sender instanceof Player p)) {
+            sender.sendMessage("Csak játékos használhatja.");
+            return true;
+        }
+        String sub = args.length == 0 ? "info" : args[0].toLowerCase();
+
+        switch (sub) {
+            case "mine" -> teleportToMine(p, "safe");
+            case "pvpmine" -> teleportToMine(p, "pvp");
+            case "debug" -> {
+                if (!p.hasPermission("banya.admin")) {
+                    p.sendMessage("§cNincs jogosultságod.");
+                    return true;
+                }
+                sendDebug(p);
+            }
+            case "tool" -> {
+                ensureTools(p);
+                p.sendMessage("§aHiányzó eszközeid és páncélod pótolva.");
+            }
+            case "setmine" -> {
+                if (!p.hasPermission("banya.admin")) {
+                    p.sendMessage("§cNincs jogosultságod.");
+                    return true;
+                }
+                if (args.length < 2 || !(args[1].equals("safe") || args[1].equals("pvp"))) {
+                    p.sendMessage("§eHasználat: /banya setmine <safe|pvp>");
+                    return true;
+                }
+                getConfig().set("mines." + args[1], p.getLocation());
+                saveConfig();
+                p.sendMessage("§aA(z) " + args[1] + " bánya belépési pontja beállítva.");
+            }
+            case "setregion" -> {
+                if (!p.hasPermission("banya.admin")) {
+                    p.sendMessage("§cNincs jogosultságod.");
+                    return true;
+                }
+                boolean validZone = args.length >= 2
+                        && (args[1].equals("wood") || args[1].equals("safe") || args[1].equals("pvp"));
+                boolean validPos = args.length >= 3 && (args[2].equals("1") || args[2].equals("2"));
+                if (!validZone || !validPos) {
+                    p.sendMessage("§eHasználat: /banya setregion <wood|safe|pvp> <1|2>");
+                    p.sendMessage("§7Állj a zóna egyik sarkába, majd a szemközti sarokba.");
+                    return true;
+                }
+                Location corner = p.getLocation().getBlock().getLocation();
+                getConfig().set("regions." + args[1] + ".pos" + args[2], corner);
+                saveConfig();
+                loadRegions();
+                boolean complete = regions.containsKey(args[1]);
+                p.sendMessage("§a" + args[1] + " zóna " + args[2] + ". sarka beállítva: §f"
+                        + corner.getBlockX() + ", " + corner.getBlockY() + ", " + corner.getBlockZ()
+                        + (complete ? " §a(a zóna kész)" : " §7(még kell a másik sarok)"));
+            }
+            default -> {
+                int level = getMainLevel(p);
+                String zone = zoneAt(p.getLocation());
+                p.sendMessage("§6--- Bányász ---");
+                p.sendMessage("§eSzint: §f" + level + " §7(" + getMainXp(p) + "/" + xpForLevel(level + 1) + " XP)");
+                p.sendMessage("§eBalta: §fLv." + getToolLevel(p, "axe") + " §7(" + getToolXp(p, "axe") + "/"
+                        + toolXpNeeded(getToolLevel(p, "axe")) + ")");
+                if (level >= cfgInt("requirements.pickaxe-level", 5)) {
+                    p.sendMessage("§eCsákány: §fLv." + getToolLevel(p, "pickaxe") + " §7(" + getToolXp(p, "pickaxe")
+                            + "/" + toolXpNeeded(getToolLevel(p, "pickaxe")) + ")");
+                }
+                if (armorUnlocked(p)) {
+                    p.sendMessage("§ePáncél: §fLv." + getArmorLevel(p) + " §7(" + getArmorXp(p) + "/"
+                            + armorXpNeeded(getArmorLevel(p)) + ")");
+                }
+                p.sendMessage("§7PvP-mentes bánya: szint " + requiredLevel("safe")
+                        + " | PvP bánya: szint " + requiredLevel("pvp"));
+                p.sendMessage("§7Jelenlegi zóna: §f" + (zone == null ? "nincs" : zone));
+            }
+        }
+        return true;
+    }
+}
