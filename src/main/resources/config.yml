@@ -98,3 +98,23 @@ rewards:
 # A zónákat és a bánya belépési pontokat NE kézzel írd át:
 #   /banya setregion <wood|safe|pvp> <1|2>
 #   /banya setmine <safe|pvp>
+
+# ---------------------------------------------------------
+# PvP páncél (a PvP bánya szintjén jár): láncing -> vas -> gyémánt -> netherite
+# Szintlépéshez szükséges XP = xp-needed-base * jelenlegi szint
+# XP forrás: érc a PvP zónában (ore-xp), játékos megölése a PvP zónában (kill-xp)
+# Védelem = (szint-1) / protection-every, max. max-protection
+# Törhetetlenség ugyanígy. A páncél mindig törhetetlen és halálkor nem dobódik el.
+# ---------------------------------------------------------
+armor:
+  max-level: 60
+  xp-needed-base: 150
+  ore-xp: 3
+  kill-xp: 25
+  protection-every: 3
+  max-protection: 10
+  unbreaking-every: 3
+  max-unbreaking: 10
+  iron-level: 10
+  diamond-level: 25
+  netherite-level: 40
