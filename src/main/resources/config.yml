@@ -8,6 +8,15 @@ level-xp-base: 40
 # Ennyi fő XP jár egy kivágott fáért
 wood-main-xp: 2
 
+# Ennyi fő XP jár egy játékos megöléséért a PvP zónában
+kill-main-xp: 20
+
+# XP szorzó zónánként (a fő XP-re és a balta/csákány XP-re). 1.0 = alap, 0.25 = negyedannyi
+xp-multiplier:
+  wood: 1.0
+  safe: 1.0
+  pvp: 0.25
+
 # true: XP és pénz CSAK a zónákban jár (fa: wood zóna, érc: safe/pvp zóna)
 # false: XP bárhol jár, de pénz csak a zónákban
 zones-only: true
@@ -98,7 +107,7 @@ armor:
   diamond-level: 25
   netherite-level: 40
 
-# Ennyi fő XP jár egy érc / ércblokk kibányászásáért
+# Ennyi fő XP jár egy érc / ércblokk kibányászásáért (a zóna szorzóval szorozva)
 ores:
   COAL_ORE: 1
   DEEPSLATE_COAL_ORE: 2
