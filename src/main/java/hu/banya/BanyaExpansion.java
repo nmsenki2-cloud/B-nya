@@ -41,16 +41,13 @@ public class BanyaExpansion extends PlaceholderExpansion {
 
         int level = plugin.getMainLevel(p);
         long xp = plugin.getMainXp(p);
+        long needed = Math.max(1L, plugin.mainXpNeeded(level));
 
         return switch (params.toLowerCase()) {
             case "level" -> String.valueOf(level);
             case "xp" -> String.valueOf(xp);
-            case "xp_next" -> String.valueOf(plugin.xpForLevel(level + 1));
-            case "xp_percent" -> {
-                long cur = plugin.xpForLevel(level);
-                long next = plugin.xpForLevel(level + 1);
-                yield String.valueOf((xp - cur) * 100 / (next - cur));
-            }
+            case "xp_next" -> String.valueOf(needed);
+            case "xp_percent" -> String.valueOf(xp * 100 / needed);
             case "axe_level" -> String.valueOf(plugin.getToolLevel(p, "axe"));
             case "axe_xp" -> String.valueOf(plugin.getToolXp(p, "axe"));
             case "axe_next" -> String.valueOf(plugin.toolXpNeeded(plugin.getToolLevel(p, "axe")));
