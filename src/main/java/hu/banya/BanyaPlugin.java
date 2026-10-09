@@ -32,6 +32,7 @@ import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.RegisteredServiceProvider;
@@ -50,6 +51,7 @@ import java.util.UUID;
 public class BanyaPlugin extends JavaPlugin implements Listener {
 
     private static final String[] ZONES = {"pvp", "safe", "wood"};
+    private static final String[] ARMOR_PIECES = {"helmet", "chestplate", "leggings", "boots"};
 
     private NamespacedKey mainXpKey;
     private NamespacedKey toolKey;
@@ -263,6 +265,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         }
         if (level == cfgInt("requirements.pvp-mine-level", 15)) {
             p.sendMessage("§cMegnyílt a §4PvP bánya§c!");
+            p.sendMessage("§cKaptál egy §4PvP páncélt§c! Ércbányászással és gyilkolással a PvP bányában fejlődik.");
         }
 
         for (String cmd : getConfig().getStringList("rewards." + level)) {
@@ -361,6 +364,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         return item;
     }
 
+    /** Bármilyen BanyaXP-s tárgy (balta, csákány, páncél): nem dobható el, halálkor megmarad. */
     private boolean isBanyaTool(ItemStack item) {
         return item != null && item.hasItemMeta()
                 && item.getItemMeta().getPersistentDataContainer().has(toolKey, PersistentDataType.STRING);
@@ -399,7 +403,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    /** Pótolja a hiányzó eszközöket (baltát mindig, csákányt a megfelelő szinttől). */
+    /** Pótolja a hiányzó eszközöket és a PvP páncélt. */
     private void ensureTools(Player p) {
         if (!hasTool(p, "axe")) {
             giveTool(p, "axe");
@@ -407,6 +411,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         if (getMainLevel(p) >= cfgInt("requirements.pickaxe-level", 5) && !hasTool(p, "pickaxe")) {
             giveTool(p, "pickaxe");
         }
+        ensureArmor(p);
     }
 
     /** Eszköz XP, csak ha a játékos a megfelelő eszközt tartja a kezében. */
@@ -445,13 +450,189 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
     }
 
     // =====================================================================
+    //  PvP páncél (láncing -> vas -> gyémánt -> netherite)
+    // =====================================================================
+
+    int getArmorLevel(Player p) {
+        return p.getPersistentDataContainer().getOrDefault(key("armor_level"), PersistentDataType.INTEGER, 1);
+    }
+
+    int getArmorXp(Player p) {
+        return p.getPersistentDataContainer().getOrDefault(key("armor_xp"), PersistentDataType.INTEGER, 0);
+    }
+
+    int armorXpNeeded(int level) {
+        return cfgInt("armor.xp-needed-base", 150) * level;
+    }
+
+    private int armorMaxLevel() {
+        return cfgInt("armor.max-level", 60);
+    }
+
+    /** A páncél attól a szinttől jár, amitől a PvP bánya megnyílik. */
+    private boolean armorUnlocked(Player p) {
+        return getMainLevel(p) >= cfgInt("requirements.pvp-mine-level", 15);
+    }
+
+    private String armorTier(int level) {
+        if (level >= cfgInt("armor.netherite-level", 40)) return "NETHERITE";
+        if (level >= cfgInt("armor.diamond-level", 25)) return "DIAMOND";
+        if (level >= cfgInt("armor.iron-level", 10)) return "IRON";
+        return "CHAINMAIL";
+    }
+
+    private String armorPieceName(String piece) {
+        return switch (piece) {
+            case "helmet" -> "Sisak";
+            case "chestplate" -> "Mellvért";
+            case "leggings" -> "Lábvért";
+            default -> "Csizma";
+        };
+    }
+
+    private ItemStack buildArmor(String piece, int level) {
+        Material mat = Material.valueOf(armorTier(level) + "_" + piece.toUpperCase());
+        ItemStack item = new ItemStack(mat);
+        ItemMeta meta = item.getItemMeta();
+
+        meta.displayName(legacy("§c§lPvP " + armorPieceName(piece) + " §7[Lv. " + level + "]"));
+
+        int prot = Math.min(cfgInt("armor.max-protection", 10),
+                (level - 1) / Math.max(1, cfgInt("armor.protection-every", 3)));
+        int unb = Math.min(cfgInt("armor.max-unbreaking", 10),
+                (level - 1) / Math.max(1, cfgInt("armor.unbreaking-every", 3)));
+
+        List<Component> lore = new ArrayList<>();
+        lore.add(legacy("§7Szint: §e" + level + "§7/" + armorMaxLevel()));
+        lore.add(legacy("§7Védelem: §e" + prot));
+        lore.add(legacy("§7Törhetetlenség: §e" + unb));
+        lore.add(legacy("§8A PvP bányában fejlődik. Nem kopik, nem dobódik el."));
+        meta.lore(lore);
+
+        meta.setUnbreakable(true);
+        if (prot > 0) {
+            meta.addEnchant(Enchantment.PROTECTION, prot, true);
+        }
+        if (unb > 0) {
+            meta.addEnchant(Enchantment.UNBREAKING, unb, true);
+        }
+        meta.getPersistentDataContainer().set(toolKey, PersistentDataType.STRING, "armor_" + piece);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private ItemStack getArmorSlot(Player p, String piece) {
+        PlayerInventory inv = p.getInventory();
+        return switch (piece) {
+            case "helmet" -> inv.getHelmet();
+            case "chestplate" -> inv.getChestplate();
+            case "leggings" -> inv.getLeggings();
+            default -> inv.getBoots();
+        };
+    }
+
+    private void setArmorSlot(Player p, String piece, ItemStack item) {
+        PlayerInventory inv = p.getInventory();
+        switch (piece) {
+            case "helmet" -> inv.setHelmet(item);
+            case "chestplate" -> inv.setChestplate(item);
+            case "leggings" -> inv.setLeggings(item);
+            default -> inv.setBoots(item);
+        }
+    }
+
+    /** Felrakja a PvP páncélt: ha már rajta van, nem nyúl hozzá; ha a táskában van (halál után), felrakja; ha nincs, újat ad. */
+    private void ensureArmor(Player p) {
+        if (!armorUnlocked(p)) return;
+        int level = getArmorLevel(p);
+
+        for (String piece : ARMOR_PIECES) {
+            String id = "armor_" + piece;
+            ItemStack worn = getArmorSlot(p, piece);
+            if (isTool(worn, id)) continue; // már rajta van
+
+            ItemStack[] storage = p.getInventory().getStorageContents();
+            int found = -1;
+            for (int i = 0; i < storage.length; i++) {
+                if (isTool(storage[i], id)) {
+                    found = i;
+                    break;
+                }
+            }
+
+            ItemStack ours;
+            if (found >= 0) {
+                ours = storage[found];
+                p.getInventory().setItem(found, null);
+            } else {
+                ours = buildArmor(piece, level);
+            }
+
+            // ha más ruha volt rajta, az a táskába kerül
+            if (worn != null && !worn.getType().isAir()) {
+                Map<Integer, ItemStack> left = p.getInventory().addItem(worn);
+                for (ItemStack rest : left.values()) {
+                    p.getWorld().dropItem(p.getLocation(), rest);
+                }
+            }
+            setArmorSlot(p, piece, ours);
+        }
+    }
+
+    /** A meglévő páncéldarabokat az aktuális szintre cseréli. */
+    private void refreshArmor(Player p) {
+        int level = getArmorLevel(p);
+        for (String piece : ARMOR_PIECES) {
+            String id = "armor_" + piece;
+            if (isTool(getArmorSlot(p, piece), id)) {
+                setArmorSlot(p, piece, buildArmor(piece, level));
+            }
+        }
+        ItemStack[] storage = p.getInventory().getStorageContents();
+        for (int i = 0; i < storage.length; i++) {
+            for (String piece : ARMOR_PIECES) {
+                if (isTool(storage[i], "armor_" + piece)) {
+                    p.getInventory().setItem(i, buildArmor(piece, level));
+                }
+            }
+        }
+    }
+
+    private void addArmorXp(Player p, int amount) {
+        if (!armorUnlocked(p)) return;
+        int level = getArmorLevel(p);
+        if (level >= armorMaxLevel()) return;
+
+        int xp = getArmorXp(p) + amount;
+        boolean leveledUp = false;
+        while (level < armorMaxLevel() && xp >= armorXpNeeded(level)) {
+            xp -= armorXpNeeded(level);
+            level++;
+            leveledUp = true;
+        }
+        if (level >= armorMaxLevel()) xp = 0;
+
+        p.getPersistentDataContainer().set(key("armor_level"), PersistentDataType.INTEGER, level);
+        p.getPersistentDataContainer().set(key("armor_xp"), PersistentDataType.INTEGER, xp);
+
+        if (leveledUp) {
+            refreshArmor(p);
+            p.sendMessage("§c§lPÁNCÉL SZINTLÉPÉS! §eÚj szint: §6" + level
+                    + " §7(több Védelem és Törhetetlenség)");
+            p.playSound(p.getLocation(), Sound.ITEM_ARMOR_EQUIP_IRON, 1f, 1f);
+        }
+    }
+
+    // =====================================================================
     //  Események
     // =====================================================================
 
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
-        refreshTools(e.getPlayer());
-        ensureTools(e.getPlayer());
+        Player p = e.getPlayer();
+        refreshTools(p);
+        refreshArmor(p);
+        ensureTools(p);
     }
 
     @EventHandler
@@ -460,9 +641,15 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         Bukkit.getScheduler().runTaskLater(this, () -> ensureTools(p), 2L);
     }
 
-    /** Az eszközök halálkor nem dobódnak el. */
+    /** Eszközök és páncél halálkor nem dobódnak el + XP a PvP zónában megölt játékosért. */
     @EventHandler
     public void onDeath(PlayerDeathEvent e) {
+        Player victim = e.getEntity();
+        Player killer = victim.getKiller();
+        if (killer != null && !killer.equals(victim) && "pvp".equals(zoneAt(victim.getLocation()))) {
+            addArmorXp(killer, cfgInt("armor.kill-xp", 25));
+        }
+
         Iterator<ItemStack> it = e.getDrops().iterator();
         while (it.hasNext()) {
             ItemStack item = it.next();
@@ -557,7 +744,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    /** Jutalom: XP, eszköz XP és pénz. */
+    /** Jutalom: XP, eszköz XP, páncél XP és pénz. */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent e) {
         Player p = e.getPlayer();
@@ -584,6 +771,9 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         } else {
             main = addMainXp(p, oreXp);
             tool = gainToolXp(p, "pickaxe");
+            if ("pvp".equals(zone)) {
+                addArmorXp(p, cfgInt("armor.ore-xp", 3));
+            }
         }
 
         String line = tool.isEmpty() ? main : main + " §8| " + tool;
@@ -634,7 +824,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
             case "pvpmine" -> teleportToMine(p, "pvp");
             case "tool" -> {
                 ensureTools(p);
-                p.sendMessage("§aHiányzó eszközeid pótolva.");
+                p.sendMessage("§aHiányzó eszközeid és páncélod pótolva.");
             }
             case "setmine" -> {
                 if (!p.hasPermission("banya.admin")) {
@@ -681,6 +871,10 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
                 if (level >= cfgInt("requirements.pickaxe-level", 5)) {
                     p.sendMessage("§eCsákány: §fLv." + getToolLevel(p, "pickaxe") + " §7(" + getToolXp(p, "pickaxe")
                             + "/" + toolXpNeeded(getToolLevel(p, "pickaxe")) + ")");
+                }
+                if (armorUnlocked(p)) {
+                    p.sendMessage("§ePáncél: §fLv." + getArmorLevel(p) + " §7(" + getArmorXp(p) + "/"
+                            + armorXpNeeded(getArmorLevel(p)) + ")");
                 }
                 p.sendMessage("§7PvP-mentes bánya: szint " + requiredLevel("safe")
                         + " | PvP bánya: szint " + requiredLevel("pvp"));
