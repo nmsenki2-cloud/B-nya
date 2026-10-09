@@ -12,11 +12,20 @@ wood-main-xp: 2
 # false: XP bárhol jár, de pénz csak a zónákban
 zones-only: true
 
+# true: a zóna a teljes magasságot lefedi (csak a sarkok X és Z koordinátája számít)
+zones-ignore-height: true
+
 # A balta a fákon kívül a leveleket is törheti?
 axe-can-break-leaves: false
 
 # Pénz kiírása actionbarban (chatben soha nem jelez)
 show-money-actionbar: false
+
+# Autopickup: a kiütött blokkok dropjai közvetlenül a táskába kerülnek
+autopickup:
+  enabled: true          # false: kikapcsolja
+  only-in-zones: false   # true: csak a zónákban (fa, safe, pvp) működik
+  pickup-exp: true       # a vanilla XP gömbök is automatikusan a játékoshoz kerülnek
 
 # Szintkövetelmények
 requirements:
@@ -54,10 +63,13 @@ money:
 # Eszközök (balta, csákány) - külön szintrendszer
 # Szintlépéshez szükséges XP = xp-needed-base * jelenlegi szint
 # Egy blokkért kapott eszköz XP = xp-base + xp-per-level * (szint - 1)
+# Hatékonyság = (szint - 1) * efficiency-per-level, de max. max-efficiency
 # ---------------------------------------------------------
 tools:
   max-level: 100
   xp-needed-base: 100
+  efficiency-per-level: 1   # minden szintlépésnél ennyivel nő a Hatékonyság
+  max-efficiency: 255       # felső határ (255 a Minecraft maximuma)
   axe:
     xp-base: 2
     xp-per-level: 1
@@ -65,39 +77,6 @@ tools:
     xp-base: 2
     xp-per-level: 1
     area-level: 100   # ettől a csákány-szinttől 3x3-as területet bányász
-
-# Ennyi fő XP jár egy érc kibányászásáért
-ores:
-  COAL_ORE: 1
-  DEEPSLATE_COAL_ORE: 2
-  COPPER_ORE: 1
-  DEEPSLATE_COPPER_ORE: 2
-  IRON_ORE: 3
-  DEEPSLATE_IRON_ORE: 4
-  GOLD_ORE: 5
-  DEEPSLATE_GOLD_ORE: 6
-  NETHER_GOLD_ORE: 3
-  REDSTONE_ORE: 3
-  DEEPSLATE_REDSTONE_ORE: 4
-  LAPIS_ORE: 4
-  DEEPSLATE_LAPIS_ORE: 5
-  EMERALD_ORE: 10
-  DEEPSLATE_EMERALD_ORE: 12
-  DIAMOND_ORE: 15
-  DEEPSLATE_DIAMOND_ORE: 20
-  NETHER_QUARTZ_ORE: 2
-  ANCIENT_DEBRIS: 40
-
-# Jutalmak fő szintenként. %player% = a játékos neve.
-rewards:
-  3:
-    - "give %player% minecraft:bread 16"
-  15:
-    - "broadcast %player% elérte a 15. szintet, megnyílt a PvP bánya!"
-
-# A zónákat és a bánya belépési pontokat NE kézzel írd át:
-#   /banya setregion <wood|safe|pvp> <1|2>
-#   /banya setmine <safe|pvp>
 
 # ---------------------------------------------------------
 # PvP páncél (a PvP bánya szintjén jár): láncing -> vas -> gyémánt -> netherite
@@ -118,3 +97,40 @@ armor:
   iron-level: 10
   diamond-level: 25
   netherite-level: 40
+
+# Ennyi fő XP jár egy érc / ércblokk kibányászásáért
+ores:
+  COAL_ORE: 1
+  DEEPSLATE_COAL_ORE: 2
+  COPPER_ORE: 1
+  DEEPSLATE_COPPER_ORE: 2
+  IRON_ORE: 3
+  DEEPSLATE_IRON_ORE: 4
+  GOLD_ORE: 5
+  DEEPSLATE_GOLD_ORE: 6
+  NETHER_GOLD_ORE: 3
+  REDSTONE_ORE: 3
+  DEEPSLATE_REDSTONE_ORE: 4
+  LAPIS_ORE: 4
+  DEEPSLATE_LAPIS_ORE: 5
+  EMERALD_ORE: 10
+  DEEPSLATE_EMERALD_ORE: 12
+  DIAMOND_ORE: 15
+  DEEPSLATE_DIAMOND_ORE: 20
+  NETHER_QUARTZ_ORE: 2
+  ANCIENT_DEBRIS: 40
+  IRON_BLOCK: 10
+  GOLD_BLOCK: 15
+  EMERALD_BLOCK: 30
+  DIAMOND_BLOCK: 40
+
+# Jutalmak fő szintenként. %player% = a játékos neve.
+rewards:
+  3:
+    - "give %player% minecraft:bread 16"
+  15:
+    - "broadcast %player% elérte a 15. szintet, megnyílt a PvP bánya!"
+
+# A zónákat és a bánya belépési pontokat NE kézzel írd át:
+#   /banya setregion <wood|safe|pvp> <1|2>
+#   /banya setmine <safe|pvp>
