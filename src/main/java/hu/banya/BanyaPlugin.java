@@ -80,6 +80,12 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         getServer().getPluginManager().registerEvents(this, this);
         // A világok betöltése után töltjük be a zónákat
         Bukkit.getScheduler().runTask(this, this::loadRegions);
+
+        // PlaceholderAPI (nem kötelező)
+        if (getServer().getPluginManager().getPlugin("PlaceholderAPI") != null) {
+            new BanyaExpansion(this).register();
+            getLogger().info("PlaceholderAPI megtalálva, a %banya_...% placeholderek elérhetők.");
+        }
         getLogger().info("BanyaXP elindult!");
     }
 
@@ -211,7 +217,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
     // =====================================================================
 
     /** Ennyi összes XP kell az adott szint eléréséhez. */
-    private long xpForLevel(int level) {
+    long xpForLevel(int level) {
         return (long) cfgInt("level-xp-base", 40) * level * (level + 1) / 2;
     }
 
@@ -223,11 +229,11 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         return level;
     }
 
-    private long getMainXp(Player p) {
+    long getMainXp(Player p) {
         return p.getPersistentDataContainer().getOrDefault(mainXpKey, PersistentDataType.LONG, 0L);
     }
 
-    private int getMainLevel(Player p) {
+    int getMainLevel(Player p) {
         return levelFromXp(getMainXp(p));
     }
 
@@ -301,15 +307,15 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
     //  Eszközök (balta, csákány) - a fejlődés a játékoson tárolódik
     // =====================================================================
 
-    private int getToolLevel(Player p, String type) {
+    int getToolLevel(Player p, String type) {
         return p.getPersistentDataContainer().getOrDefault(key(type + "_level"), PersistentDataType.INTEGER, 1);
     }
 
-    private int getToolXp(Player p, String type) {
+    int getToolXp(Player p, String type) {
         return p.getPersistentDataContainer().getOrDefault(key(type + "_xp"), PersistentDataType.INTEGER, 0);
     }
 
-    private int toolXpNeeded(int level) {
+    int toolXpNeeded(int level) {
         return cfgInt("tools.xp-needed-base", 100) * level;
     }
 
@@ -331,7 +337,9 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
 
         meta.displayName(legacy("§6§lBányász " + toolName(type) + " §7[Lv. " + level + "]"));
 
-        int eff = Math.min(5, (level - 1) / 3);
+        // Minden szintlépésnél +1 (vagy amennyi a configban van) Hatékonyság
+        int eff = Math.min(cfgInt("tools.max-efficiency", 255),
+                (level - 1) * cfgInt("tools.efficiency-per-level", 1));
         List<Component> lore = new ArrayList<>();
         lore.add(legacy("§7Szint: §e" + level + "§7/" + toolMaxLevel()));
         lore.add(legacy("§7Hatékonyság: §e" + eff));
@@ -379,6 +387,18 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         }
     }
 
+    /** A meglévő eszközöket az aktuális szintnek megfelelőre cseréli (pl. plugin frissítés után). */
+    private void refreshTools(Player p) {
+        ItemStack[] contents = p.getInventory().getContents();
+        for (int i = 0; i < contents.length; i++) {
+            for (String type : new String[]{"axe", "pickaxe"}) {
+                if (isTool(contents[i], type)) {
+                    p.getInventory().setItem(i, buildTool(type, getToolLevel(p, type)));
+                }
+            }
+        }
+    }
+
     /** Pótolja a hiányzó eszközöket (baltát mindig, csákányt a megfelelő szinttől). */
     private void ensureTools(Player p) {
         if (!hasTool(p, "axe")) {
@@ -418,7 +438,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         if (leveledUp) {
             p.getInventory().setItemInMainHand(buildTool(type, level));
             p.sendMessage("§b§l" + name.toUpperCase() + " SZINTLÉPÉS! §eÚj szint: §6" + level
-                    + " §7(több XP jár egy blokkért)");
+                    + " §7(+Hatékonyság, több XP jár egy blokkért)");
             p.playSound(p.getLocation(), Sound.BLOCK_ANVIL_USE, 0.6f, 1.4f);
         }
         return "§b" + name + " Lv." + level + " §e+" + gain + " §7(" + xp + "/" + toolXpNeeded(level) + ")";
@@ -430,6 +450,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
 
     @EventHandler
     public void onJoin(PlayerJoinEvent e) {
+        refreshTools(e.getPlayer());
         ensureTools(e.getPlayer());
     }
 
