@@ -57,6 +57,9 @@ public class BanyaExpansion extends PlaceholderExpansion {
             case "pickaxe_level" -> String.valueOf(plugin.getToolLevel(p, "pickaxe"));
             case "pickaxe_xp" -> String.valueOf(plugin.getToolXp(p, "pickaxe"));
             case "pickaxe_next" -> String.valueOf(plugin.toolXpNeeded(plugin.getToolLevel(p, "pickaxe")));
+            case "armor_level" -> String.valueOf(plugin.getArmorLevel(p));
+            case "armor_xp" -> String.valueOf(plugin.getArmorXp(p));
+            case "armor_next" -> String.valueOf(plugin.armorXpNeeded(plugin.getArmorLevel(p)));
             default -> null;
         };
     }
