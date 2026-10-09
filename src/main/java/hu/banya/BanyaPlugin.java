@@ -34,6 +34,7 @@ import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.PlayerInventory;
 import org.bukkit.inventory.meta.ItemMeta;
+import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -53,6 +54,14 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
 
     private static final String[] ZONES = {"pvp", "safe", "wood"};
     private static final String[] ARMOR_PIECES = {"helmet", "chestplate", "leggings", "boots"};
+
+    /** Csak operátoroknak (banya.admin jogosultság) elérhető alparancsok. */
+    private static final Set<String> ADMIN_SUBS = Set.of("reload", "debug", "setregion", "setmine",
+            "setlevel", "addlevel", "settool", "reset");
+
+    /** Csak játékos használhatja (konzol nem). */
+    private static final Set<String> PLAYER_ONLY_SUBS = Set.of("info", "mine", "pvpmine", "tool", "debug",
+            "setregion", "setmine");
 
     private NamespacedKey mainXpKey;
     private NamespacedKey toolKey;
@@ -433,6 +442,31 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
             giveTool(p, "pickaxe");
         }
         ensureArmor(p);
+    }
+
+    /** Eltávolítja azokat a tárgyakat, amikhez a játékosnak (még) nincs meg a szintje. */
+    private void removeLockedItems(Player p) {
+        boolean removePickaxe = getMainLevel(p) < cfgInt("requirements.pickaxe-level", 5);
+        boolean removeArmor = !armorUnlocked(p);
+        PlayerInventory inv = p.getInventory();
+        ItemStack[] contents = inv.getContents();
+        for (int i = 0; i < contents.length; i++) {
+            ItemStack item = contents[i];
+            if (!isBanyaTool(item)) continue;
+            String id = item.getItemMeta().getPersistentDataContainer().get(toolKey, PersistentDataType.STRING);
+            if (id == null) continue;
+            if ((removePickaxe && id.equals("pickaxe")) || (removeArmor && id.startsWith("armor_"))) {
+                inv.setItem(i, null);
+            }
+        }
+    }
+
+    /** Szinkronizálja a játékos tárgyait az adataival (admin parancsok és reload után). */
+    private void syncPlayer(Player p) {
+        removeLockedItems(p);
+        refreshTools(p);
+        refreshArmor(p);
+        ensureTools(p);
     }
 
     /** Eszköz XP, csak ha a játékos a megfelelő eszközt tartja a kezében. mult = zóna szorzó. */
@@ -931,83 +965,286 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         }
     }
 
+    private void sendInfo(Player p) {
+        int level = getMainLevel(p);
+        String zone = zoneAt(p.getLocation());
+        p.sendMessage("§6--- Bányász ---");
+        p.sendMessage("§eSzint: §f" + level + " §7(" + getMainXp(p) + "/" + xpForLevel(level + 1) + " XP)");
+        p.sendMessage("§eBalta: §fLv." + getToolLevel(p, "axe") + " §7(" + getToolXp(p, "axe") + "/"
+                + toolXpNeeded(getToolLevel(p, "axe")) + ")");
+        if (level >= cfgInt("requirements.pickaxe-level", 5)) {
+            p.sendMessage("§eCsákány: §fLv." + getToolLevel(p, "pickaxe") + " §7(" + getToolXp(p, "pickaxe")
+                    + "/" + toolXpNeeded(getToolLevel(p, "pickaxe")) + ")");
+        }
+        if (armorUnlocked(p)) {
+            p.sendMessage("§ePáncél: §fLv." + getArmorLevel(p) + " §7(" + getArmorXp(p) + "/"
+                    + armorXpNeeded(getArmorLevel(p)) + ")");
+        }
+        p.sendMessage("§7PvP-mentes bánya: szint " + requiredLevel("safe")
+                + " | PvP bánya: szint " + requiredLevel("pvp"));
+        p.sendMessage("§7Jelenlegi zóna: §f" + (zone == null ? "nincs" : zone));
+    }
+
+    private void sendHelp(CommandSender s) {
+        boolean admin = s.hasPermission("banya.admin");
+        s.sendMessage("§6--- BanyaXP parancsok ---");
+        s.sendMessage("§e/banya §7- a saját szinted és eszközeid állapota");
+        s.sendMessage("§e/banya help §7- ez a lista");
+        s.sendMessage("§e/banya mine §7- teleport a PvP-mentes bányába (szint " + requiredLevel("safe") + ")");
+        s.sendMessage("§e/banya pvpmine §7- teleport a PvP bányába (szint " + requiredLevel("pvp") + ")");
+        s.sendMessage("§e/banya tool §7- hiányzó eszközök és páncél pótlása");
+        if (!admin) return;
+        s.sendMessage("§c--- Admin (operátor) parancsok ---");
+        s.sendMessage("§e/banya reload §7- config és zónák újratöltése");
+        s.sendMessage("§e/banya debug §7- diagnosztika a célzott blokkra");
+        s.sendMessage("§e/banya setregion <wood|safe|pvp> <1|2> §7- zóna sarkának beállítása");
+        s.sendMessage("§e/banya setmine <safe|pvp> §7- bánya belépési pontja");
+        s.sendMessage("§e/banya setlevel <játékos> <szint> §7- fő szint beállítása");
+        s.sendMessage("§e/banya addlevel <játékos> <szám> §7- szintek hozzáadása (negatívval elvétel)");
+        s.sendMessage("§e/banya settool <játékos> <axe|pickaxe|armor> <szint> §7- eszköz szint beállítása");
+        s.sendMessage("§e/banya reset <játékos> [main|axe|pickaxe|armor|all] §7- adatok nullázása");
+    }
+
+    private void doReload(CommandSender s) {
+        reloadConfig();
+        loadRegions();
+        for (Player online : Bukkit.getOnlinePlayers()) {
+            syncPlayer(online);
+        }
+        s.sendMessage("§aBanyaXP config újratöltve. §7(Betöltött zónák: " + regions.size() + ")");
+    }
+
+    private void cmdSetMine(Player p, String[] args) {
+        if (args.length < 2 || !(args[1].equals("safe") || args[1].equals("pvp"))) {
+            p.sendMessage("§eHasználat: /banya setmine <safe|pvp>");
+            return;
+        }
+        getConfig().set("mines." + args[1], p.getLocation());
+        saveConfig();
+        p.sendMessage("§aA(z) " + args[1] + " bánya belépési pontja beállítva.");
+    }
+
+    private void cmdSetRegion(Player p, String[] args) {
+        boolean validZone = args.length >= 2
+                && (args[1].equals("wood") || args[1].equals("safe") || args[1].equals("pvp"));
+        boolean validPos = args.length >= 3 && (args[2].equals("1") || args[2].equals("2"));
+        if (!validZone || !validPos) {
+            p.sendMessage("§eHasználat: /banya setregion <wood|safe|pvp> <1|2>");
+            p.sendMessage("§7Állj a zóna egyik sarkába, majd a szemközti sarokba.");
+            return;
+        }
+        Location corner = p.getLocation().getBlock().getLocation();
+        getConfig().set("regions." + args[1] + ".pos" + args[2], corner);
+        saveConfig();
+        loadRegions();
+        boolean complete = regions.containsKey(args[1]);
+        p.sendMessage("§a" + args[1] + " zóna " + args[2] + ". sarka beállítva: §f"
+                + corner.getBlockX() + ", " + corner.getBlockY() + ", " + corner.getBlockZ()
+                + (complete ? " §a(a zóna kész)" : " §7(még kell a másik sarok)"));
+    }
+
+    private Player findTarget(CommandSender s, String name) {
+        Player target = Bukkit.getPlayerExact(name);
+        if (target == null) {
+            s.sendMessage("§cNincs ilyen online játékos: §f" + name);
+        }
+        return target;
+    }
+
+    private Integer parseInt(CommandSender s, String text) {
+        try {
+            return Integer.parseInt(text);
+        } catch (NumberFormatException ex) {
+            s.sendMessage("§cEz nem szám: §f" + text);
+            return null;
+        }
+    }
+
+    /** /banya setlevel és /banya addlevel. */
+    private void cmdSetLevel(CommandSender s, String[] args, boolean add) {
+        if (args.length < 3) {
+            s.sendMessage(add ? "§eHasználat: /banya addlevel <játékos> <szám>"
+                    : "§eHasználat: /banya setlevel <játékos> <szint>");
+            return;
+        }
+        Player target = findTarget(s, args[1]);
+        if (target == null) return;
+        Integer n = parseInt(s, args[2]);
+        if (n == null) return;
+
+        int current = getMainLevel(target);
+        int level = add ? current + n : n;
+        level = Math.max(0, Math.min(10000, level));
+
+        target.getPersistentDataContainer().set(mainXpKey, PersistentDataType.LONG, xpForLevel(level));
+        syncPlayer(target);
+
+        s.sendMessage("§a" + target.getName() + " szintje: §e" + current + " §7-> §6" + level);
+        if (!target.equals(s)) {
+            target.sendMessage("§eA szintedet egy admin módosította. Új szinted: §6" + level);
+        }
+    }
+
+    /** /banya settool <játékos> <axe|pickaxe|armor> <szint>. */
+    private void cmdSetTool(CommandSender s, String[] args) {
+        if (args.length < 4) {
+            s.sendMessage("§eHasználat: /banya settool <játékos> <axe|pickaxe|armor> <szint>");
+            return;
+        }
+        Player target = findTarget(s, args[1]);
+        if (target == null) return;
+        String type = args[2].toLowerCase();
+        if (!(type.equals("axe") || type.equals("pickaxe") || type.equals("armor"))) {
+            s.sendMessage("§eHasználat: /banya settool <játékos> <axe|pickaxe|armor> <szint>");
+            return;
+        }
+        Integer n = parseInt(s, args[3]);
+        if (n == null) return;
+
+        int max = type.equals("armor") ? armorMaxLevel() : toolMaxLevel();
+        int level = Math.max(1, Math.min(max, n));
+
+        PersistentDataContainer pdc = target.getPersistentDataContainer();
+        pdc.set(key(type + "_level"), PersistentDataType.INTEGER, level);
+        pdc.set(key(type + "_xp"), PersistentDataType.INTEGER, 0);
+        syncPlayer(target);
+
+        s.sendMessage("§a" + target.getName() + " " + type + " szintje: §6" + level + " §7(max: " + max + ")");
+        if (!target.equals(s)) {
+            target.sendMessage("§eA(z) " + type + " szintedet egy admin módosította. Új szint: §6" + level);
+        }
+    }
+
+    private void resetPair(PersistentDataContainer pdc, String base) {
+        pdc.remove(key(base + "_level"));
+        pdc.remove(key(base + "_xp"));
+    }
+
+    /** /banya reset <játékos> [main|axe|pickaxe|armor|all]. */
+    private void cmdReset(CommandSender s, String[] args) {
+        if (args.length < 2) {
+            s.sendMessage("§eHasználat: /banya reset <játékos> [main|axe|pickaxe|armor|all]");
+            return;
+        }
+        Player target = findTarget(s, args[1]);
+        if (target == null) return;
+
+        String what = args.length >= 3 ? args[2].toLowerCase() : "all";
+        PersistentDataContainer pdc = target.getPersistentDataContainer();
+
+        switch (what) {
+            case "main" -> pdc.remove(mainXpKey);
+            case "axe" -> resetPair(pdc, "axe");
+            case "pickaxe" -> resetPair(pdc, "pickaxe");
+            case "armor" -> resetPair(pdc, "armor");
+            case "all" -> {
+                pdc.remove(mainXpKey);
+                resetPair(pdc, "axe");
+                resetPair(pdc, "pickaxe");
+                resetPair(pdc, "armor");
+            }
+            default -> {
+                s.sendMessage("§eHasználat: /banya reset <játékos> [main|axe|pickaxe|armor|all]");
+                return;
+            }
+        }
+        syncPlayer(target);
+
+        s.sendMessage("§a" + target.getName() + " adatai nullázva: §6" + what);
+        if (!target.equals(s)) {
+            target.sendMessage("§eAz adataid (" + what + ") egy admin által nullázva lettek.");
+        }
+    }
+
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
-        if (!(sender instanceof Player p)) {
-            sender.sendMessage("Csak játékos használhatja.");
-            return true;
-        }
         String sub = args.length == 0 ? "info" : args[0].toLowerCase();
 
+        if (ADMIN_SUBS.contains(sub) && !sender.hasPermission("banya.admin")) {
+            sender.sendMessage("§cEhhez operátor jogosultság kell.");
+            return true;
+        }
+        if (PLAYER_ONLY_SUBS.contains(sub) && !(sender instanceof Player)) {
+            sender.sendMessage("Ezt a parancsot csak játékos használhatja.");
+            return true;
+        }
+        Player p = sender instanceof Player self ? self : null;
+
         switch (sub) {
+            case "help", "?" -> sendHelp(sender);
+            case "info" -> sendInfo(p);
             case "mine" -> teleportToMine(p, "safe");
             case "pvpmine" -> teleportToMine(p, "pvp");
-            case "debug" -> {
-                if (!p.hasPermission("banya.admin")) {
-                    p.sendMessage("§cNincs jogosultságod.");
-                    return true;
-                }
-                sendDebug(p);
-            }
             case "tool" -> {
                 ensureTools(p);
                 p.sendMessage("§aHiányzó eszközeid és páncélod pótolva.");
             }
-            case "setmine" -> {
-                if (!p.hasPermission("banya.admin")) {
-                    p.sendMessage("§cNincs jogosultságod.");
-                    return true;
-                }
-                if (args.length < 2 || !(args[1].equals("safe") || args[1].equals("pvp"))) {
-                    p.sendMessage("§eHasználat: /banya setmine <safe|pvp>");
-                    return true;
-                }
-                getConfig().set("mines." + args[1], p.getLocation());
-                saveConfig();
-                p.sendMessage("§aA(z) " + args[1] + " bánya belépési pontja beállítva.");
-            }
-            case "setregion" -> {
-                if (!p.hasPermission("banya.admin")) {
-                    p.sendMessage("§cNincs jogosultságod.");
-                    return true;
-                }
-                boolean validZone = args.length >= 2
-                        && (args[1].equals("wood") || args[1].equals("safe") || args[1].equals("pvp"));
-                boolean validPos = args.length >= 3 && (args[2].equals("1") || args[2].equals("2"));
-                if (!validZone || !validPos) {
-                    p.sendMessage("§eHasználat: /banya setregion <wood|safe|pvp> <1|2>");
-                    p.sendMessage("§7Állj a zóna egyik sarkába, majd a szemközti sarokba.");
-                    return true;
-                }
-                Location corner = p.getLocation().getBlock().getLocation();
-                getConfig().set("regions." + args[1] + ".pos" + args[2], corner);
-                saveConfig();
-                loadRegions();
-                boolean complete = regions.containsKey(args[1]);
-                p.sendMessage("§a" + args[1] + " zóna " + args[2] + ". sarka beállítva: §f"
-                        + corner.getBlockX() + ", " + corner.getBlockY() + ", " + corner.getBlockZ()
-                        + (complete ? " §a(a zóna kész)" : " §7(még kell a másik sarok)"));
-            }
-            default -> {
-                int level = getMainLevel(p);
-                String zone = zoneAt(p.getLocation());
-                p.sendMessage("§6--- Bányász ---");
-                p.sendMessage("§eSzint: §f" + level + " §7(" + getMainXp(p) + "/" + xpForLevel(level + 1) + " XP)");
-                p.sendMessage("§eBalta: §fLv." + getToolLevel(p, "axe") + " §7(" + getToolXp(p, "axe") + "/"
-                        + toolXpNeeded(getToolLevel(p, "axe")) + ")");
-                if (level >= cfgInt("requirements.pickaxe-level", 5)) {
-                    p.sendMessage("§eCsákány: §fLv." + getToolLevel(p, "pickaxe") + " §7(" + getToolXp(p, "pickaxe")
-                            + "/" + toolXpNeeded(getToolLevel(p, "pickaxe")) + ")");
-                }
-                if (armorUnlocked(p)) {
-                    p.sendMessage("§ePáncél: §fLv." + getArmorLevel(p) + " §7(" + getArmorXp(p) + "/"
-                            + armorXpNeeded(getArmorLevel(p)) + ")");
-                }
-                p.sendMessage("§7PvP-mentes bánya: szint " + requiredLevel("safe")
-                        + " | PvP bánya: szint " + requiredLevel("pvp"));
-                p.sendMessage("§7Jelenlegi zóna: §f" + (zone == null ? "nincs" : zone));
-            }
+            case "reload" -> doReload(sender);
+            case "debug" -> sendDebug(p);
+            case "setmine" -> cmdSetMine(p, args);
+            case "setregion" -> cmdSetRegion(p, args);
+            case "setlevel" -> cmdSetLevel(sender, args, false);
+            case "addlevel" -> cmdSetLevel(sender, args, true);
+            case "settool" -> cmdSetTool(sender, args);
+            case "reset" -> cmdReset(sender, args);
+            default -> sender.sendMessage("§cIsmeretlen parancs. Írd be: §e/banya help");
         }
         return true;
+    }
+
+    // =====================================================================
+    //  Tab kiegészítés
+    // =====================================================================
+
+    private List<String> filter(List<String> options, String prefix) {
+        String lower = prefix.toLowerCase();
+        List<String> result = new ArrayList<>();
+        for (String option : options) {
+            if (option.toLowerCase().startsWith(lower)) {
+                result.add(option);
+            }
+        }
+        return result;
+    }
+
+    @Override
+    public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
+        boolean admin = sender.hasPermission("banya.admin");
+        List<String> out = new ArrayList<>();
+
+        if (args.length == 1) {
+            out.addAll(List.of("help", "mine", "pvpmine", "tool"));
+            if (admin) {
+                out.addAll(List.of("reload", "debug", "setregion", "setmine", "setlevel", "addlevel",
+                        "settool", "reset"));
+            }
+            return filter(out, args[0]);
+        }
+        if (!admin) return out;
+
+        String sub = args[0].toLowerCase();
+        if (args.length == 2) {
+            switch (sub) {
+                case "setregion" -> out.addAll(List.of("wood", "safe", "pvp"));
+                case "setmine" -> out.addAll(List.of("safe", "pvp"));
+                case "setlevel", "addlevel", "settool", "reset" -> {
+                    for (Player online : Bukkit.getOnlinePlayers()) {
+                        out.add(online.getName());
+                    }
+                }
+                default -> { }
+            }
+            return filter(out, args[1]);
+        }
+        if (args.length == 3) {
+            switch (sub) {
+                case "setregion" -> out.addAll(List.of("1", "2"));
+                case "settool" -> out.addAll(List.of("axe", "pickaxe", "armor"));
+                case "reset" -> out.addAll(List.of("all", "main", "axe", "pickaxe", "armor"));
+                default -> { }
+            }
+            return filter(out, args[2]);
+        }
+        return out;
     }
 }
