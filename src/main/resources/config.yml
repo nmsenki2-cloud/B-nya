@@ -6,7 +6,7 @@
 level-xp-base: 40
 
 # true: XP és pénz CSAK a saját zónájában jár (pl. a gyémánt zónában a gyémántérc)
-# false: XP bárhol jár, de pénz csak a megfelelő zónában
+# false: XP bárhol jár, de pénz és VexShard csak a megfelelő zónában
 zones-only: true
 
 # true: a zóna a teljes magasságot lefedi (csak a sarkok X és Z koordinátája számít)
@@ -18,6 +18,9 @@ axe-can-break-leaves: false
 # Pénz kiírása actionbarban (chatben soha nem jelez)
 show-money-actionbar: false
 
+# VexShard kiírása actionbarban
+show-shards-actionbar: true
+
 # Autopickup: a kiütött blokkok dropjai közvetlenül a táskába kerülnek
 autopickup:
   enabled: true          # false: kikapcsolja
@@ -26,6 +29,213 @@ autopickup:
 
 requirements:
   pickaxe-level: 5       # ettől a fő szinttől kap csákányt
+
+# ---------------------------------------------------------
+# Rangok és szorzók
+# A játékos szorzója: ha van megvásárolt rangja (lent: ranks), akkor annak a szorzója,
+# MÁSKÜLÖNBEN az utoljára feloldott bánya szorzója (zones: multiplier).
+# A szorzó erre hat (kapcsolható):
+# ---------------------------------------------------------
+multiplier-applies:
+  money: true
+  shards: true
+  xp: false
+
+# Megvásárolható rangok. A rang meglétét a jogosultság dönti el
+# (LuckPermsben egy csoport: group.<név>). Ha a játékosnak van ilyen rangja,
+# csak ennek a szorzóját kapja, zónarangot már nem.
+ranks:
+  vip:
+    display: "&aVIP"
+    permission: "group.vip"
+    multiplier: 30
+  vex:
+    display: "&5Vex"
+    permission: "group.vex"
+    multiplier: 50
+
+# ---------------------------------------------------------
+# VexShard bolt (/banya shop)
+#   slot:     melyik helyre kerül (0-tól; rows * 9 - 1-ig)
+#   material: az ikon
+#   name, lore: szöveg (& színkódokkal), a lore-ban a %price% az árra cserélődik
+#   price:    ár VexShardban
+#   commands: konzol parancsok vásárláskor (%player% = a játékos neve)
+# A parancsokat írd át a saját pluginjaidnak megfelelően (a lenti KOTH parancs csak példa)!
+# ---------------------------------------------------------
+shop:
+  title: "&5VexShard bolt"
+  rows: 3
+  items:
+    koth:
+      slot: 11
+      material: BEACON
+      name: "&cKOTH indító"
+      lore:
+        - "&7Elindít egy KOTH eseményt."
+        - ""
+        - "&7Ár: &d%price% VexShard"
+        - "&eKattints a vásárláshoz!"
+      price: 500
+      commands:
+        - "koth start"
+    gyemant:
+      slot: 15
+      material: DIAMOND
+      name: "&b16 gyémánt"
+      lore:
+        - "&7Ár: &d%price% VexShard"
+        - "&eKattints a vásárláshoz!"
+      price: 100
+      commands:
+        - "give %player% minecraft:diamond 16"
+
+# ---------------------------------------------------------
+# Alapértékek a zónákhoz (egy zóna felülírhatja a sajátjában)
+#   money: pénz blokkonként a játékos fő szintje alapján:
+#          pénz = base + per-level * (szint - start-level), max: felső határ (0 = nincs)
+#          Ezt még megszorozza a játékos szorzója.
+#   shard: VexShard esély (0-1) és mennyiség blokkonként (a szorzóval szorozva)
+# ---------------------------------------------------------
+zone-defaults:
+  money: {base: 100, per-level: 100, start-level: 1, max: 500}
+  shard: {chance: 0.1, amount: 1}
+
+# ---------------------------------------------------------
+# Bányászzónák EGYMÁS UTÁN: a sorrend a bányák sorrendje. Mind PvP-mentes.
+# A kulcs a zóna neve a /banya setregion parancsban.
+#   display:        a zóna neve a játékosoknak
+#   rank:           a zóna rangja (& színkódokkal), %banya_rank%
+#   materials:      mely blokkok jutalmazottak (LOGS = az összes fa)
+#   required-level: ettől a fő szinttől oldható fel (0 = nincs szintkövetelmény)
+#   main-xp:        fő XP egy blokkért
+#   multiplier:     a zónarang szorzója
+#   unlock:         a bánya FELOLDÁSÁNAK ára (money = pénz, vexshard = VexShard)
+#   rank-commands:  (nem kötelező) konzol parancsok feloldáskor, pl. LuckPerms rang adása:
+#                   rank-commands: ["lp user %player% parent set fa"]
+# Az első zóna (fa) ingyenes.
+# FIGYELEM: az árak és szorzók csak kiindulási értékek, hangold őket!
+# ---------------------------------------------------------
+zones:
+  wood:
+    display: "Fa"
+    rank: "&7Favágó"
+    materials: [LOGS]
+    required-level: 0
+    main-xp: 2
+    multiplier: 1
+  stone:
+    display: "Kő"
+    rank: "&7Kőfaragó"
+    materials: [STONE, COBBLESTONE, DEEPSLATE, COBBLED_DEEPSLATE]
+    required-level: 0
+    main-xp: 1
+    multiplier: 1.5
+    unlock: {money: 5000, vexshard: 10}
+  coal:
+    display: "Szénérc"
+    rank: "&8Szénbányász"
+    materials: [COAL_ORE, DEEPSLATE_COAL_ORE]
+    required-level: 0
+    main-xp: 1
+    multiplier: 2
+    unlock: {money: 10000, vexshard: 20}
+  iron:
+    display: "Vasérc"
+    rank: "&fVasbányász"
+    materials: [IRON_ORE, DEEPSLATE_IRON_ORE]
+    required-level: 0
+    main-xp: 3
+    multiplier: 3
+    unlock: {money: 25000, vexshard: 40}
+  redstone:
+    display: "Redstone érc"
+    rank: "&cRedstone bányász"
+    materials: [REDSTONE_ORE, DEEPSLATE_REDSTONE_ORE]
+    required-level: 0
+    main-xp: 3
+    multiplier: 4
+    unlock: {money: 50000, vexshard: 70}
+  lapis:
+    display: "Lapis érc"
+    rank: "&9Lapis bányász"
+    materials: [LAPIS_ORE, DEEPSLATE_LAPIS_ORE]
+    required-level: 0
+    main-xp: 4
+    multiplier: 5
+    unlock: {money: 100000, vexshard: 110}
+  gold:
+    display: "Aranyérc"
+    rank: "&6Aranybányász"
+    materials: [GOLD_ORE, DEEPSLATE_GOLD_ORE]
+    required-level: 0
+    main-xp: 5
+    multiplier: 6
+    unlock: {money: 200000, vexshard: 160}
+  diamond:
+    display: "Gyémántérc"
+    rank: "&bGyémántbányász"
+    materials: [DIAMOND_ORE, DEEPSLATE_DIAMOND_ORE]
+    required-level: 0
+    main-xp: 15
+    multiplier: 7
+    unlock: {money: 400000, vexshard: 220}
+  iron_block:
+    display: "Vasblokk"
+    rank: "&fVasmágnás"
+    materials: [IRON_BLOCK]
+    required-level: 0
+    main-xp: 10
+    multiplier: 8
+    unlock: {money: 700000, vexshard: 300}
+  gold_block:
+    display: "Aranyblokk"
+    rank: "&6Aranymágnás"
+    materials: [GOLD_BLOCK]
+    required-level: 0
+    main-xp: 15
+    multiplier: 9
+    unlock: {money: 1100000, vexshard: 400}
+  lapis_block:
+    display: "Lapisblokk"
+    rank: "&9Lapismágnás"
+    materials: [LAPIS_BLOCK]
+    required-level: 0
+    main-xp: 12
+    multiplier: 10
+    unlock: {money: 1600000, vexshard: 520}
+  diamond_block:
+    display: "Gyémántblokk"
+    rank: "&bGyémántmágnás"
+    materials: [DIAMOND_BLOCK]
+    required-level: 0
+    main-xp: 40
+    multiplier: 11
+    unlock: {money: 2300000, vexshard: 680}
+  quartz:
+    display: "Kvarcérc"
+    rank: "&fKvarcmester"
+    materials: [NETHER_QUARTZ_ORE]
+    required-level: 0
+    main-xp: 2
+    multiplier: 12
+    unlock: {money: 3200000, vexshard: 860}
+  nether_gold:
+    display: "Nether aranyérc"
+    rank: "&eNether kincsvadász"
+    materials: [NETHER_GOLD_ORE]
+    required-level: 0
+    main-xp: 3
+    multiplier: 13
+    unlock: {money: 4500000, vexshard: 1060}
+  netherite_block:
+    display: "Netheriteblokk"
+    rank: "&5Netherite király"
+    materials: [NETHERITE_BLOCK]
+    required-level: 0
+    main-xp: 80
+    multiplier: 14
+    unlock: {money: 6000000, vexshard: 1300}
 
 # ---------------------------------------------------------
 # Eszközök (balta, csákány) - bányászatból fejlődnek
@@ -47,7 +257,7 @@ tools:
     area-level: 100   # ettől a csákány-szinttől 3x3-as területet bányász
 
 # ---------------------------------------------------------
-# PvP zóna + PvP felszerelés (láncing szett + kő kard)
+# PvP zóna + PvP felszerelés (láncing szett + kő kard) - külön helyen van
 # A szett és a kard CSAK játékos-ölésből fejlődik (a PvP zónában megölt játékosért).
 # Szintlépéshez szükséges XP = xp-needed-base * jelenlegi szint
 # Védelem/Törhetetlenség/Élesség = (szint-1) / ...-every, max. a megadott érték
@@ -76,107 +286,6 @@ pvp:
     iron-level: 10
     diamond-level: 25
     netherite-level: 40
-
-# ---------------------------------------------------------
-# Bányászzónák (mind PvP-mentes). A kulcs a zóna neve a /banya setregion parancsban.
-#   display:        a játékosoknak kiírt név
-#   materials:      mely blokkok jutalmazottak (LOGS = az összes fa)
-#   required-level: ettől a fő szinttől léphet be
-#   main-xp:        fő XP egy blokkért
-#   money:          pénz (Vault) blokkonként a játékos fő szintje alapján:
-#                   pénz = base + per-level * (szint - start-level), max: felső határ (0 = nincs)
-# ---------------------------------------------------------
-zones:
-  wood:
-    display: "Fa"
-    materials: [LOGS]
-    required-level: 0
-    main-xp: 2
-    money: {base: 100, per-level: 100, start-level: 1, max: 500}
-  stone:
-    display: "Kő"
-    materials: [STONE, COBBLESTONE, DEEPSLATE, COBBLED_DEEPSLATE]
-    required-level: 5
-    main-xp: 1
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  coal:
-    display: "Szénérc"
-    materials: [COAL_ORE, DEEPSLATE_COAL_ORE]
-    required-level: 5
-    main-xp: 1
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  iron:
-    display: "Vasérc"
-    materials: [IRON_ORE, DEEPSLATE_IRON_ORE]
-    required-level: 5
-    main-xp: 3
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  redstone:
-    display: "Redstone érc"
-    materials: [REDSTONE_ORE, DEEPSLATE_REDSTONE_ORE]
-    required-level: 5
-    main-xp: 3
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  lapis:
-    display: "Lapis érc"
-    materials: [LAPIS_ORE, DEEPSLATE_LAPIS_ORE]
-    required-level: 5
-    main-xp: 4
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  gold:
-    display: "Aranyérc"
-    materials: [GOLD_ORE, DEEPSLATE_GOLD_ORE]
-    required-level: 5
-    main-xp: 5
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  diamond:
-    display: "Gyémántérc"
-    materials: [DIAMOND_ORE, DEEPSLATE_DIAMOND_ORE]
-    required-level: 5
-    main-xp: 15
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  iron_block:
-    display: "Vasblokk"
-    materials: [IRON_BLOCK]
-    required-level: 5
-    main-xp: 10
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  gold_block:
-    display: "Aranyblokk"
-    materials: [GOLD_BLOCK]
-    required-level: 5
-    main-xp: 15
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  lapis_block:
-    display: "Lapisblokk"
-    materials: [LAPIS_BLOCK]
-    required-level: 5
-    main-xp: 12
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  diamond_block:
-    display: "Gyémántblokk"
-    materials: [DIAMOND_BLOCK]
-    required-level: 5
-    main-xp: 40
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  quartz:
-    display: "Kvarcérc"
-    materials: [NETHER_QUARTZ_ORE]
-    required-level: 5
-    main-xp: 2
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  nether_gold:
-    display: "Nether aranyérc"
-    materials: [NETHER_GOLD_ORE]
-    required-level: 5
-    main-xp: 3
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
-  netherite_block:
-    display: "Netheriteblokk"
-    materials: [NETHERITE_BLOCK]
-    required-level: 5
-    main-xp: 80
-    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
 
 # Jutalmak fő szintenként. %player% = a játékos neve.
 rewards:
