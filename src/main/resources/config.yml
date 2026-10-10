@@ -5,20 +5,8 @@
 # ---------------------------------------------------------
 level-xp-base: 40
 
-# Ennyi fő XP jár egy kivágott fáért
-wood-main-xp: 2
-
-# Ennyi fő XP jár egy játékos megöléséért a PvP zónában
-kill-main-xp: 20
-
-# XP szorzó zónánként (a fő XP-re és a balta/csákány XP-re). 1.0 = alap, 0.25 = negyedannyi
-xp-multiplier:
-  wood: 1.0
-  safe: 1.0
-  pvp: 0.25
-
-# true: XP és pénz CSAK a zónákban jár (fa: wood zóna, érc: safe/pvp zóna)
-# false: XP bárhol jár, de pénz csak a zónákban
+# true: XP és pénz CSAK a saját zónájában jár (pl. a gyémánt zónában a gyémántérc)
+# false: XP bárhol jár, de pénz csak a megfelelő zónában
 zones-only: true
 
 # true: a zóna a teljes magasságot lefedi (csak a sarkok X és Z koordinátája számít)
@@ -33,43 +21,14 @@ show-money-actionbar: false
 # Autopickup: a kiütött blokkok dropjai közvetlenül a táskába kerülnek
 autopickup:
   enabled: true          # false: kikapcsolja
-  only-in-zones: false   # true: csak a zónákban (fa, safe, pvp) működik
+  only-in-zones: false   # true: csak a zónákban működik
   pickup-exp: true       # a vanilla XP gömbök is automatikusan a játékoshoz kerülnek
 
-# Szintkövetelmények
 requirements:
-  pickaxe-level: 5     # ettől a szinttől kap csákányt
-  safe-mine-level: 5   # PvP-mentes bánya
-  pvp-mine-level: 15   # PvP bánya
+  pickaxe-level: 5       # ettől a fő szinttől kap csákányt
 
 # ---------------------------------------------------------
-# Pénz (Vault) blokkonként, a játékos fő szintje alapján
-# pénz = base + per-level * (szint - start-level)   (de legalább base)
-# max: felső határ, 0 = nincs határ
-#
-# wood: 100 (0-1. szint) ... 500 (5. szinten)
-# safe: 500 (5. szint)   ... 1500 (15. szinten)
-# pvp:  1500 (15. szint) ... szintenként +100, korlát nélkül
-# ---------------------------------------------------------
-money:
-  wood:
-    base: 100
-    per-level: 100
-    start-level: 1
-    max: 500
-  safe:
-    base: 500
-    per-level: 100
-    start-level: 5
-    max: 1500
-  pvp:
-    base: 1500
-    per-level: 100
-    start-level: 15
-    max: 0
-
-# ---------------------------------------------------------
-# Eszközök (balta, csákány) - külön szintrendszer
+# Eszközök (balta, csákány) - bányászatból fejlődnek
 # Szintlépéshez szükséges XP = xp-needed-base * jelenlegi szint
 # Egy blokkért kapott eszköz XP = xp-base + xp-per-level * (szint - 1)
 # Hatékonyság = (szint - 1) * efficiency-per-level, de max. max-efficiency
@@ -77,8 +36,8 @@ money:
 tools:
   max-level: 100
   xp-needed-base: 100
-  efficiency-per-level: 1   # minden szintlépésnél ennyivel nő a Hatékonyság
-  max-efficiency: 255       # felső határ (255 a Minecraft maximuma)
+  efficiency-per-level: 1
+  max-efficiency: 255
   axe:
     xp-base: 2
     xp-per-level: 1
@@ -88,58 +47,144 @@ tools:
     area-level: 100   # ettől a csákány-szinttől 3x3-as területet bányász
 
 # ---------------------------------------------------------
-# PvP páncél (a PvP bánya szintjén jár): láncing -> vas -> gyémánt -> netherite
+# PvP zóna + PvP felszerelés (láncing szett + kő kard)
+# A szett és a kard CSAK játékos-ölésből fejlődik (a PvP zónában megölt játékosért).
 # Szintlépéshez szükséges XP = xp-needed-base * jelenlegi szint
-# XP forrás: érc a PvP zónában (ore-xp), játékos megölése a PvP zónában (kill-xp)
-# Védelem = (szint-1) / protection-every, max. max-protection
-# Törhetetlenség ugyanígy. A páncél mindig törhetetlen és halálkor nem dobódik el.
+# Védelem/Törhetetlenség/Élesség = (szint-1) / ...-every, max. a megadott érték
+# A felszerelés mindig törhetetlen, nem dobható el, halálkor megmarad.
 # ---------------------------------------------------------
-armor:
-  max-level: 60
-  xp-needed-base: 150
-  ore-xp: 3
-  kill-xp: 25
-  protection-every: 3
-  max-protection: 10
-  unbreaking-every: 3
-  max-unbreaking: 10
-  iron-level: 10
-  diamond-level: 25
-  netherite-level: 40
+pvp:
+  required-level: 15     # ettől a fő szinttől léphetnek be, és ekkor kapják a szettet + kardot
+  kill-main-xp: 20       # fő XP egy játékos megöléséért (0 = nem jár)
+  armor:
+    max-level: 60
+    xp-needed-base: 150
+    kill-xp: 25
+    protection-every: 3
+    max-protection: 10
+    unbreaking-every: 3
+    max-unbreaking: 10
+    iron-level: 10
+    diamond-level: 25
+    netherite-level: 40
+  sword:
+    max-level: 60
+    xp-needed-base: 150
+    kill-xp: 25
+    sharpness-every: 3
+    max-sharpness: 10
+    iron-level: 10
+    diamond-level: 25
+    netherite-level: 40
 
-# Ennyi fő XP jár egy érc / ércblokk kibányászásáért (a zóna szorzóval szorozva)
-ores:
-  COAL_ORE: 1
-  DEEPSLATE_COAL_ORE: 2
-  COPPER_ORE: 1
-  DEEPSLATE_COPPER_ORE: 2
-  IRON_ORE: 3
-  DEEPSLATE_IRON_ORE: 4
-  GOLD_ORE: 5
-  DEEPSLATE_GOLD_ORE: 6
-  NETHER_GOLD_ORE: 3
-  REDSTONE_ORE: 3
-  DEEPSLATE_REDSTONE_ORE: 4
-  LAPIS_ORE: 4
-  DEEPSLATE_LAPIS_ORE: 5
-  EMERALD_ORE: 10
-  DEEPSLATE_EMERALD_ORE: 12
-  DIAMOND_ORE: 15
-  DEEPSLATE_DIAMOND_ORE: 20
-  NETHER_QUARTZ_ORE: 2
-  ANCIENT_DEBRIS: 40
-  IRON_BLOCK: 10
-  GOLD_BLOCK: 15
-  EMERALD_BLOCK: 30
-  DIAMOND_BLOCK: 40
+# ---------------------------------------------------------
+# Bányászzónák (mind PvP-mentes). A kulcs a zóna neve a /banya setregion parancsban.
+#   display:        a játékosoknak kiírt név
+#   materials:      mely blokkok jutalmazottak (LOGS = az összes fa)
+#   required-level: ettől a fő szinttől léphet be
+#   main-xp:        fő XP egy blokkért
+#   money:          pénz (Vault) blokkonként a játékos fő szintje alapján:
+#                   pénz = base + per-level * (szint - start-level), max: felső határ (0 = nincs)
+# ---------------------------------------------------------
+zones:
+  wood:
+    display: "Fa"
+    materials: [LOGS]
+    required-level: 0
+    main-xp: 2
+    money: {base: 100, per-level: 100, start-level: 1, max: 500}
+  stone:
+    display: "Kő"
+    materials: [STONE, COBBLESTONE, DEEPSLATE, COBBLED_DEEPSLATE]
+    required-level: 5
+    main-xp: 1
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  coal:
+    display: "Szénérc"
+    materials: [COAL_ORE, DEEPSLATE_COAL_ORE]
+    required-level: 5
+    main-xp: 1
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  iron:
+    display: "Vasérc"
+    materials: [IRON_ORE, DEEPSLATE_IRON_ORE]
+    required-level: 5
+    main-xp: 3
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  redstone:
+    display: "Redstone érc"
+    materials: [REDSTONE_ORE, DEEPSLATE_REDSTONE_ORE]
+    required-level: 5
+    main-xp: 3
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  lapis:
+    display: "Lapis érc"
+    materials: [LAPIS_ORE, DEEPSLATE_LAPIS_ORE]
+    required-level: 5
+    main-xp: 4
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  gold:
+    display: "Aranyérc"
+    materials: [GOLD_ORE, DEEPSLATE_GOLD_ORE]
+    required-level: 5
+    main-xp: 5
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  diamond:
+    display: "Gyémántérc"
+    materials: [DIAMOND_ORE, DEEPSLATE_DIAMOND_ORE]
+    required-level: 5
+    main-xp: 15
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  iron_block:
+    display: "Vasblokk"
+    materials: [IRON_BLOCK]
+    required-level: 5
+    main-xp: 10
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  gold_block:
+    display: "Aranyblokk"
+    materials: [GOLD_BLOCK]
+    required-level: 5
+    main-xp: 15
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  lapis_block:
+    display: "Lapisblokk"
+    materials: [LAPIS_BLOCK]
+    required-level: 5
+    main-xp: 12
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  diamond_block:
+    display: "Gyémántblokk"
+    materials: [DIAMOND_BLOCK]
+    required-level: 5
+    main-xp: 40
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  quartz:
+    display: "Kvarcérc"
+    materials: [NETHER_QUARTZ_ORE]
+    required-level: 5
+    main-xp: 2
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  nether_gold:
+    display: "Nether aranyérc"
+    materials: [NETHER_GOLD_ORE]
+    required-level: 5
+    main-xp: 3
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
+  netherite_block:
+    display: "Netheriteblokk"
+    materials: [NETHERITE_BLOCK]
+    required-level: 5
+    main-xp: 80
+    money: {base: 500, per-level: 100, start-level: 5, max: 1500}
 
 # Jutalmak fő szintenként. %player% = a játékos neve.
 rewards:
   3:
     - "give %player% minecraft:bread 16"
   15:
-    - "broadcast %player% elérte a 15. szintet, megnyílt a PvP bánya!"
+    - "broadcast %player% elérte a 15. szintet, megnyílt a PvP zóna!"
 
-# A zónákat és a bánya belépési pontokat NE kézzel írd át:
-#   /banya setregion <wood|safe|pvp> <1|2>
-#   /banya setmine <safe|pvp>
+# A zónákat és a belépési pontokat NE kézzel írd át:
+#   /banya setregion <zóna> <1|2>
+#   /banya setwarp <zóna>
