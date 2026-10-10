@@ -4,8 +4,12 @@ import me.clip.placeholderapi.expansion.PlaceholderExpansion;
 import org.bukkit.OfflinePlayer;
 import org.bukkit.entity.Player;
 
+import java.util.Set;
+
 /** PlaceholderAPI bővítés: %banya_...% placeholderek. */
 public class BanyaExpansion extends PlaceholderExpansion {
+
+    private static final Set<String> TYPES = Set.of("axe", "pickaxe", "armor", "sword");
 
     private final BanyaPlugin plugin;
 
@@ -39,28 +43,45 @@ public class BanyaExpansion extends PlaceholderExpansion {
         Player p = offline == null ? null : offline.getPlayer();
         if (p == null) return "0";
 
+        String key = params.toLowerCase();
         int level = plugin.getMainLevel(p);
         long xp = plugin.getMainXp(p);
 
-        return switch (params.toLowerCase()) {
-            case "level" -> String.valueOf(level);
-            case "xp" -> String.valueOf(xp);
-            case "xp_next" -> String.valueOf(plugin.xpForLevel(level + 1));
-            case "xp_percent" -> {
+        switch (key) {
+            case "level":
+                return String.valueOf(level);
+            case "xp":
+                return String.valueOf(xp);
+            case "xp_next":
+                return String.valueOf(plugin.xpForLevel(level + 1));
+            case "xp_percent": {
                 long cur = plugin.xpForLevel(level);
                 long next = plugin.xpForLevel(level + 1);
-                yield String.valueOf((xp - cur) * 100 / (next - cur));
+                return String.valueOf((xp - cur) * 100 / (next - cur));
             }
-            case "axe_level" -> String.valueOf(plugin.getToolLevel(p, "axe"));
-            case "axe_xp" -> String.valueOf(plugin.getToolXp(p, "axe"));
-            case "axe_next" -> String.valueOf(plugin.toolXpNeeded(plugin.getToolLevel(p, "axe")));
-            case "pickaxe_level" -> String.valueOf(plugin.getToolLevel(p, "pickaxe"));
-            case "pickaxe_xp" -> String.valueOf(plugin.getToolXp(p, "pickaxe"));
-            case "pickaxe_next" -> String.valueOf(plugin.toolXpNeeded(plugin.getToolLevel(p, "pickaxe")));
-            case "armor_level" -> String.valueOf(plugin.getArmorLevel(p));
-            case "armor_xp" -> String.valueOf(plugin.getArmorXp(p));
-            case "armor_next" -> String.valueOf(plugin.armorXpNeeded(plugin.getArmorLevel(p)));
-            default -> null;
-        };
+            default:
+                break;
+        }
+
+        // <típus>_level, <típus>_xp, <típus>_next (axe, pickaxe, armor, sword)
+        int us = key.indexOf('_');
+        if (us > 0) {
+            String type = key.substring(0, us);
+            String field = key.substring(us + 1);
+            if (TYPES.contains(type)) {
+                int lvl = plugin.getToolLevel(p, type);
+                switch (field) {
+                    case "level":
+                        return String.valueOf(lvl);
+                    case "xp":
+                        return String.valueOf(plugin.getToolXp(p, type));
+                    case "next":
+                        return String.valueOf(plugin.xpNeeded(type, lvl));
+                    default:
+                        return null;
+                }
+            }
+        }
+        return null;
     }
 }
