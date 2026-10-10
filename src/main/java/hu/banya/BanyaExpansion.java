@@ -59,6 +59,16 @@ public class BanyaExpansion extends PlaceholderExpansion {
                 long next = plugin.xpForLevel(level + 1);
                 return String.valueOf((xp - cur) * 100 / (next - cur));
             }
+            case "shards":
+                return String.valueOf(plugin.getShards(p));
+            case "rank":
+                return plugin.getRankName(p);
+            case "multiplier":
+                return plugin.multiplierText(plugin.getMultiplier(p));
+            case "zone":
+                return plugin.unlockedZoneDisplay(p);
+            case "zone_number":
+                return String.valueOf(plugin.getUnlocked(p) + 1);
             default:
                 break;
         }
