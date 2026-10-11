@@ -3,6 +3,7 @@ package hu.banya;
 import net.kyori.adventure.text.Component;
 import net.kyori.adventure.text.format.TextDecoration;
 import net.kyori.adventure.text.serializer.legacy.LegacyComponentSerializer;
+import net.kyori.adventure.title.Title;
 import net.milkbowl.vault.economy.Economy;
 import net.milkbowl.vault.economy.EconomyResponse;
 import org.bukkit.Bukkit;
@@ -46,6 +47,7 @@ import org.bukkit.plugin.RegisteredServiceProvider;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.RayTraceResult;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.HashMap;
@@ -69,7 +71,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
 
     /** Csak játékos használhatja (konzol nem). */
     private static final Set<String> PLAYER_ONLY_SUBS = Set.of("info", "tp", "pvpmine", "tool", "debug",
-            "setregion", "setwarp", "shop", "unlock", "mines", "shards");
+            "setregion", "setwarp", "shop", "unlock", "mines", "shards", "rebirth");
 
     private NamespacedKey mainXpKey;
     private NamespacedKey toolKey;
@@ -82,6 +84,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
     private final List<PurchasedRank> purchasedRanks = new ArrayList<>();
     private final Map<UUID, Long> lastDeniedMsg = new HashMap<>();
     private final Map<UUID, Long> lastFullMsg = new HashMap<>();
+    private final Map<UUID, Long> rebirthPending = new HashMap<>();
 
     /** Játékos által lerakott jutalmazott blokkok - ezekért nem jár XP/pénz (újraindításkor törlődik). */
     private final Set<String> placedBlocks = new HashSet<>();
@@ -98,10 +101,10 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
     }
 
     /** Egy bányászzóna beállításai a configból. */
-    private record ZoneCfg(String display, String rank, Set<Material> mats, boolean logs, int requiredLevel,
-                           int mainXp, double multiplier, double unlockMoney, long unlockShards,
-                           double moneyBase, double moneyPerLevel, int moneyStart, double moneyMax,
-                           double shardChance, int shardAmount, List<String> rankCommands) {
+    private record ZoneCfg(String display, String rank, Material icon, Set<Material> mats, boolean logs,
+                           int requiredLevel, int mainXp, double multiplier, double unlockMoney,
+                           long unlockShards, double moneyBase, double moneyPerLevel, int moneyStart,
+                           double moneyMax, double shardChance, int shardAmount, List<String> rankCommands) {
         boolean matches(Material m) {
             return mats.contains(m) || (logs && Tag.LOGS.isTagged(m));
         }
@@ -115,6 +118,21 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
     private static class ShopHolder implements InventoryHolder {
         private Inventory inv;
         private final Map<Integer, String> slotToItem = new HashMap<>();
+
+        @Override
+        public Inventory getInventory() {
+            return inv;
+        }
+    }
+
+    /** A bánya-feloldó GUI. */
+    private static class UnlockHolder implements InventoryHolder {
+        private Inventory inv;
+        private final String zone;
+
+        UnlockHolder(String zone) {
+            this.zone = zone;
+        }
 
         @Override
         public Inventory getInventory() {
@@ -161,6 +179,12 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
 
     private String color(String text) {
         return text.replace('&', '§');
+    }
+
+    /** Cím + alcím a képernyő közepén (nem a chaten). */
+    private void showTitle(Player p, String title, String subtitle) {
+        p.showTitle(Title.title(legacy(title), legacy(subtitle),
+                Title.Times.times(Duration.ofMillis(200), Duration.ofMillis(2500), Duration.ofMillis(500))));
     }
 
     private int cfgInt(String path, int def) {
@@ -217,6 +241,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
 
                 Set<Material> mats = new HashSet<>();
                 boolean logs = false;
+                Material firstMat = null;
                 for (String m : z.getStringList("materials")) {
                     if (m.equalsIgnoreCase("LOGS")) {
                         logs = true;
@@ -227,10 +252,17 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
                         getLogger().warning("Ismeretlen blokk a(z) " + name + " zónában: " + m);
                     } else {
                         mats.add(mat);
+                        if (firstMat == null) firstMat = mat;
                     }
                 }
+
+                Material icon = null;
+                String iconName = z.getString("icon");
+                if (iconName != null) icon = Material.matchMaterial(iconName);
+                if (icon == null) icon = firstMat != null ? firstMat : (logs ? Material.OAK_LOG : Material.STONE);
+
                 String display = z.getString("display", name);
-                zoneCfgs.put(name, new ZoneCfg(display, z.getString("rank", display), mats, logs,
+                zoneCfgs.put(name, new ZoneCfg(display, z.getString("rank", display), icon, mats, logs,
                         z.getInt("required-level", 0), z.getInt("main-xp", 1),
                         z.getDouble("multiplier", 1.0),
                         z.getDouble("unlock.money", 0), z.getLong("unlock.vexshard", 0),
@@ -322,37 +354,47 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
     }
 
     private String costText(ZoneCfg z) {
-        return "§a$" + fmt(z.unlockMoney()) + " §7+ §d" + fmt(z.unlockShards()) + " VexShard";
+        String text = "§a$" + fmt(z.unlockMoney()) + " §7+ §d" + fmt(z.unlockShards()) + " VexShard";
+        if (z.requiredLevel() > 0) {
+            text += " §7+ §e" + z.requiredLevel() + ". szint";
+        }
+        return text;
     }
 
-    /** Elutasító üzenet (várakozás nélkül): miért nem léphet be a játékos. */
-    private void sendDeny(Player p, String zone) {
+    /**
+     * Elutasítás a képernyőn: miért nem léphet be a játékos. Ha a KÖVETKEZŐ bányába lépne és a szintje
+     * megvan, a feloldó GUI nyílik meg (allowGui).
+     */
+    private void sendDeny(Player p, String zone, boolean allowGui) {
+        int level = getMainLevel(p);
         if (zone.equals("pvp")) {
-            p.sendMessage("§cA PvP zónához legalább §e" + requiredLevel("pvp") + ". §cszint kell! (Most: "
-                    + getMainLevel(p) + ")");
+            showTitle(p, "§c✖ PvP zóna", "§7Kell hozzá §e" + requiredLevel("pvp") + ". §7szint §8(most: " + level + ")");
             return;
         }
         ZoneCfg z = zoneCfgs.get(zone);
+        if (z == null) return;
         int idx = zoneOrder.indexOf(zone);
         int unlocked = getUnlocked(p);
-        if (z == null) return;
+
         if (idx > unlocked + 1) {
-            p.sendMessage("§cEz a bánya (§e" + z.display() + "§c) még zárolva. Előbb oldd fel az előző bányákat: §e/banya mines");
-        } else if (idx == unlocked + 1) {
-            p.sendMessage("§cEz a bánya (§e" + z.display() + "§c) még zárolva. Feloldás: §e/banya unlock §7(ár: "
-                    + costText(z) + "§7)");
+            showTitle(p, "§c✖ " + z.display(), "§7Előbb oldd fel az előző bányákat §8(/banya mines)");
+        } else if (idx == unlocked + 1 && level >= z.requiredLevel()) {
+            if (allowGui) {
+                Bukkit.getScheduler().runTask(this, () -> openUnlockGui(p));
+            } else {
+                showTitle(p, "§c✖ " + z.display(), "§7Oldd fel a bányát: §e/banya unlock");
+            }
         } else {
-            p.sendMessage("§cEhhez a bányához legalább §e" + z.requiredLevel() + ". §cszint kell! (Most: "
-                    + getMainLevel(p) + ")");
+            showTitle(p, "§c✖ " + z.display(), "§7Kell hozzá §e" + z.requiredLevel() + ". §7szint §8(most: " + level + ")");
         }
     }
 
-    private void denyMessage(Player p, String zone) {
+    private void denyMessage(Player p, String zone, boolean allowGui) {
         long now = System.currentTimeMillis();
         Long last = lastDeniedMsg.get(p.getUniqueId());
-        if (last != null && now - last < 3000) return;
+        if (last != null && now - last < 4000) return;
         lastDeniedMsg.put(p.getUniqueId(), now);
-        sendDeny(p, zone);
+        sendDeny(p, zone, allowGui);
     }
 
     /** Nem lehet belépni a zónába, ha nincs feloldva (mozgás). */
@@ -368,7 +410,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         String zone = zoneAt(to);
         if (zone == null || canAccess(p, zone)) return;
 
-        denyMessage(p, zone);
+        denyMessage(p, zone, true);
         if (zone.equals(zoneAt(from))) {
             // már bent van (pl. később húztuk fel a zónát) -> kiküldjük a spawnra
             e.setTo(p.getWorld().getSpawnLocation());
@@ -384,7 +426,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         String zone = zoneAt(e.getTo());
         if (zone != null && !canAccess(e.getPlayer(), zone)) {
             e.setCancelled(true);
-            denyMessage(e.getPlayer(), zone);
+            denyMessage(e.getPlayer(), zone, true);
         }
     }
 
@@ -480,53 +522,221 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         }
     }
 
-    /** /banya unlock: a következő bánya feloldása pénzért és VexShardért. */
-    private void cmdUnlock(Player p) {
+    private ItemStack guiItem(Material m, String name, List<String> lore) {
+        ItemStack item = new ItemStack(m);
+        ItemMeta meta = item.getItemMeta();
+        meta.displayName(legacy(name));
+        List<Component> l = new ArrayList<>();
+        for (String line : lore) {
+            l.add(legacy(line));
+        }
+        meta.lore(l);
+        item.setItemMeta(meta);
+        return item;
+    }
+
+    private String mark(boolean ok) {
+        return ok ? "§a✔" : "§c✖";
+    }
+
+    /** A következő bánya feloldó GUI-ja: feltételek (szint, pénz, VexShard) és a megerősítő gomb. */
+    private void openUnlockGui(Player p) {
         int next = getUnlocked(p) + 1;
         if (next >= zoneOrder.size()) {
-            p.sendMessage("§aMár minden bányát feloldottál!");
+            showTitle(p, "§a✔ Kész!", "§7Minden bányát feloldottál.");
             return;
         }
         String name = zoneOrder.get(next);
         ZoneCfg z = zoneCfgs.get(name);
+
+        UnlockHolder holder = new UnlockHolder(name);
+        Inventory inv = Bukkit.createInventory(holder, 27, legacy("§8Bánya feloldása: " + z.display()));
+        holder.inv = inv;
+
+        int level = getMainLevel(p);
+        boolean levelOk = level >= z.requiredLevel();
+        Economy eco = getEconomy();
+        double balance = eco == null ? 0 : eco.getBalance(p);
+        boolean moneyOk = z.unlockMoney() <= 0 || (eco != null && balance >= z.unlockMoney());
+        long shards = getShards(p);
+        boolean shardOk = shards >= z.unlockShards();
+        boolean all = levelOk && moneyOk && shardOk;
+
+        ItemStack filler = guiItem(Material.GRAY_STAINED_GLASS_PANE, " ", List.of());
+        for (int i = 0; i < 27; i++) {
+            inv.setItem(i, filler);
+        }
+
+        inv.setItem(11, guiItem(z.icon(), "§b§l" + z.display(), List.of(
+                "§7Sorszám: §f" + (next + 1) + "§7/" + zoneOrder.size(),
+                "§7Rang: " + color(z.rank()),
+                "§7Szorzó: §e" + multiplierText(z.multiplier()) + "x",
+                "§7Fő XP blokkonként: §f" + z.mainXp())));
+
+        List<String> lore = new ArrayList<>();
+        if (z.requiredLevel() > 0) {
+            lore.add("§7Szint: §e" + z.requiredLevel() + " " + mark(levelOk) + " §8(most: " + level + ")");
+        }
+        lore.add("§7Pénz: §a$" + fmt(z.unlockMoney()) + " " + mark(moneyOk) + " §8(van: $" + fmt(balance) + ")");
+        lore.add("§7VexShard: §d" + fmt(z.unlockShards()) + " " + mark(shardOk) + " §8(van: " + fmt(shards) + ")");
+        lore.add("");
+        lore.add(all ? "§eKattints a feloldáshoz!" : "§cMég nem teljesül minden feltétel.");
+        inv.setItem(13, guiItem(all ? Material.LIME_CONCRETE : Material.RED_CONCRETE,
+                all ? "§a§lFELOLDÁS" : "§c§lNem oldható fel", lore));
+
+        inv.setItem(15, guiItem(Material.BARRIER, "§cMégse", List.of("§7Bezárás")));
+
+        p.openInventory(inv);
+    }
+
+    /** A következő bánya feloldása pénzért és VexShardért (a GUI-ból vagy parancsból). */
+    private void tryUnlock(Player p, String expectedZone) {
+        int next = getUnlocked(p) + 1;
+        if (next >= zoneOrder.size()) {
+            showTitle(p, "§a✔ Kész!", "§7Minden bányát feloldottál.");
+            return;
+        }
+        String name = zoneOrder.get(next);
+        if (expectedZone != null && !expectedZone.equals(name)) return; // elavult GUI
+        ZoneCfg z = zoneCfgs.get(name);
+
         int level = getMainLevel(p);
         if (level < z.requiredLevel()) {
-            p.sendMessage("§cEhhez a bányához legalább §e" + z.requiredLevel() + ". §cszint kell! (Most: " + level + ")");
+            showTitle(p, "§c✖ Nem sikerült", "§7Kell hozzá §e" + z.requiredLevel() + ". §7szint §8(most: " + level + ")");
             return;
         }
         long shards = getShards(p);
         if (shards < z.unlockShards()) {
-            p.sendMessage("§cNincs elég VexShard-od! §7(Kell: §d" + fmt(z.unlockShards()) + "§7, van: §d"
-                    + fmt(shards) + "§7)");
+            showTitle(p, "§c✖ Nincs elég VexShard", "§7Kell: §d" + fmt(z.unlockShards()) + " §8(van: " + fmt(shards) + ")");
             return;
         }
         Economy eco = getEconomy();
         if (z.unlockMoney() > 0) {
             if (eco == null) {
-                p.sendMessage("§cNincs gazdasági plugin, a feloldás most nem lehetséges.");
+                showTitle(p, "§c✖ Nem sikerült", "§7Nincs gazdasági plugin.");
                 return;
             }
             if (!eco.has(p, z.unlockMoney())) {
-                p.sendMessage("§cNincs elég pénzed! §7(Kell: §a$" + fmt(z.unlockMoney()) + "§7)");
+                showTitle(p, "§c✖ Nincs elég pénzed", "§7Kell: §a$" + fmt(z.unlockMoney()));
                 return;
             }
             EconomyResponse resp = eco.withdrawPlayer(p, z.unlockMoney());
             if (!resp.transactionSuccess()) {
-                p.sendMessage("§cA fizetés nem sikerült.");
+                showTitle(p, "§c✖ Nem sikerült", "§7A fizetés nem sikerült.");
                 return;
             }
         }
         setShards(p, shards - z.unlockShards());
         p.getPersistentDataContainer().set(key("zone_unlocked"), PersistentDataType.INTEGER, next);
 
-        p.sendMessage("§a§lFELOLDVA! §eÚj bánya: §b" + z.display());
-        if (purchasedRankOf(p) == null) {
-            p.sendMessage("§7Új rangod: " + color(z.rank()) + " §7(szorzó: §e" + multiplierText(z.multiplier()) + "x§7)");
-        } else {
-            p.sendMessage("§7A megvásárolt rangod szorzóját kapod: §e" + multiplierText(getMultiplier(p)) + "x");
-        }
+        showTitle(p, "§a§l✔ FELOLDVA!", "§b" + z.display() + " §8| " + getRankName(p) + " §7(" + multiplierText(getMultiplier(p)) + "x)");
         p.playSound(p.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 1f);
         runRankCommands(p, name);
+    }
+
+    @EventHandler
+    public void onUnlockClick(InventoryClickEvent e) {
+        if (!(e.getView().getTopInventory().getHolder() instanceof UnlockHolder holder)) return;
+        e.setCancelled(true);
+        if (!(e.getWhoClicked() instanceof Player p)) return;
+        Inventory clicked = e.getClickedInventory();
+        if (clicked == null || !(clicked.getHolder() instanceof UnlockHolder)) return;
+
+        if (e.getSlot() == 13) {
+            Bukkit.getScheduler().runTask(this, () -> {
+                p.closeInventory();
+                tryUnlock(p, holder.zone);
+            });
+        } else if (e.getSlot() == 15) {
+            Bukkit.getScheduler().runTask(this, p::closeInventory);
+        }
+    }
+
+    @EventHandler
+    public void onUnlockDrag(InventoryDragEvent e) {
+        if (e.getView().getTopInventory().getHolder() instanceof UnlockHolder) {
+            e.setCancelled(true);
+        }
+    }
+
+    // =====================================================================
+    //  Újjászületés (/banya rebirth)
+    // =====================================================================
+
+    int getRebirths(Player p) {
+        return p.getPersistentDataContainer().getOrDefault(key("rebirths"), PersistentDataType.INTEGER, 0);
+    }
+
+    private void cmdRebirth(Player p, String[] args) {
+        if (getConfig().getBoolean("rebirth.require-all-mines", true) && getUnlocked(p) < zoneOrder.size() - 1) {
+            showTitle(p, "§c✖ Újjászületés", "§7Előbb oldd fel az összes bányát §8(" + (getUnlocked(p) + 1) + "/"
+                    + zoneOrder.size() + ")");
+            return;
+        }
+
+        boolean confirm = args.length >= 2 && args[1].equalsIgnoreCase("confirm");
+        int secs = Math.max(5, cfgInt("rebirth.confirm-seconds", 30));
+        long now = System.currentTimeMillis();
+        Long pending = rebirthPending.get(p.getUniqueId());
+
+        if (!confirm || pending == null || now - pending > secs * 1000L) {
+            rebirthPending.put(p.getUniqueId(), now);
+            p.sendMessage("§6§l--- ÚJJÁSZÜLETÉS ---");
+            p.sendMessage("§cFIGYELEM! §7Minden nullázódik, és újrakezded az egészet:");
+            p.sendMessage("§7- a fő szint és az XP");
+            p.sendMessage("§7- a balta, csákány, páncél és kard szintje");
+            p.sendMessage("§7- a feloldott bányák (újra a fával kezdesz)");
+            if (getConfig().getBoolean("rebirth.reset-shards", true)) {
+                p.sendMessage("§7- a VexShard egyenleged");
+            }
+            if (getConfig().getBoolean("rebirth.reset-money", false)) {
+                p.sendMessage("§7- a pénzed");
+            }
+            p.sendMessage("§eMegerősítés: §f/banya rebirth confirm §7(" + secs + " másodpercen belül)");
+            return;
+        }
+
+        rebirthPending.remove(p.getUniqueId());
+        performRebirth(p);
+    }
+
+    private void performRebirth(Player p) {
+        PersistentDataContainer pdc = p.getPersistentDataContainer();
+        pdc.remove(mainXpKey);
+        for (String type : new String[]{"axe", "pickaxe", "armor", "sword"}) {
+            resetPair(pdc, type);
+        }
+        pdc.remove(key("zone_unlocked"));
+        pdc.remove(key("rank_init"));
+        if (getConfig().getBoolean("rebirth.reset-shards", true)) {
+            pdc.remove(key("vexshard"));
+        }
+        if (getConfig().getBoolean("rebirth.reset-money", false)) {
+            Economy eco = getEconomy();
+            if (eco != null) {
+                double bal = eco.getBalance(p);
+                if (bal > 0) eco.withdrawPlayer(p, bal);
+            }
+        }
+        int count = getRebirths(p) + 1;
+        pdc.set(key("rebirths"), PersistentDataType.INTEGER, count);
+
+        syncPlayer(p);
+        initRank(p);
+
+        // Ha zárolt zónában áll, kivisszük az elejére
+        String zone = zoneAt(p.getLocation());
+        if (zone != null && !canAccess(p, zone)) {
+            Location warp = zoneOrder.isEmpty() ? null : getConfig().getLocation("warps." + zoneOrder.get(0));
+            p.teleport(warp != null && warp.getWorld() != null ? warp : p.getWorld().getSpawnLocation());
+        }
+
+        showTitle(p, "§6§l✦ ÚJJÁSZÜLETÉS ✦", "§7Kezdd újra az utat! §8(" + count + ". alkalom)");
+        p.playSound(p.getLocation(), Sound.UI_TOAST_CHALLENGE_COMPLETE, 1f, 0.8f);
+
+        for (String cmd : getConfig().getStringList("rebirth.commands")) {
+            runConsole(cmd.replace("%count%", String.valueOf(count)), p);
+        }
     }
 
     // =====================================================================
@@ -1171,7 +1381,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         String zone = zoneAt(b.getLocation());
         if (zone != null && !canAccess(p, zone)) {
             e.setCancelled(true);
-            denyMessage(p, zone);
+            denyMessage(p, zone, false);
             return;
         }
 
@@ -1335,7 +1545,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
             return;
         }
         if (!canAccess(p, zone)) {
-            sendDeny(p, zone);
+            sendDeny(p, zone, true);
             return;
         }
         Location loc = getConfig().getLocation("warps." + zone);
@@ -1400,6 +1610,9 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         p.sendMessage("§eVexShard: §d" + fmt(getShards(p)));
         p.sendMessage("§eFeloldott bányák: §f" + (getUnlocked(p) + 1) + "§7/" + zoneOrder.size()
                 + " §7(/banya mines)");
+        if (getRebirths(p) > 0) {
+            p.sendMessage("§eÚjjászületések: §6" + getRebirths(p));
+        }
         p.sendMessage("§eBalta: §fLv." + getToolLevel(p, "axe") + " §7(" + getToolXp(p, "axe") + "/"
                 + xpNeeded("axe", getToolLevel(p, "axe")) + ")");
         if (level >= cfgInt("requirements.pickaxe-level", 5)) {
@@ -1423,7 +1636,11 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
             ZoneCfg z = zoneCfgs.get(zoneOrder.get(i));
             String status = i <= unlocked ? "§a✔ " : (i == unlocked + 1 ? "§e➜ " : "§c✖ ");
             StringBuilder line = new StringBuilder(status).append("§f").append(z.display())
-                    .append(" §7(").append(multiplierText(z.multiplier())).append("x)");
+                    .append(" §7(").append(multiplierText(z.multiplier())).append("x");
+            if (z.requiredLevel() > 0) {
+                line.append(", szint ").append(z.requiredLevel());
+            }
+            line.append(")");
             if (i == unlocked + 1) {
                 line.append(" §7ár: ").append(costText(z));
             }
@@ -1439,12 +1656,13 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         s.sendMessage("§e/banya §7- a saját szinted, rangod és eszközeid állapota");
         s.sendMessage("§e/banya help §7- ez a lista");
         s.sendMessage("§e/banya mines §7- bányák listája, állapota és ára");
-        s.sendMessage("§e/banya unlock §7- a következő bánya feloldása (pénz + VexShard)");
+        s.sendMessage("§e/banya unlock §7- a következő bánya feloldása (GUI)");
         s.sendMessage("§e/banya shop §7- VexShard bolt");
         s.sendMessage("§e/banya shards §7- VexShard egyenleged");
         s.sendMessage("§e/banya tp <zóna> §7- teleport egy feloldott bányába");
         s.sendMessage("§e/banya pvpmine §7- teleport a PvP zónába (szint " + requiredLevel("pvp") + ")");
         s.sendMessage("§e/banya tool §7- hiányzó eszközök, kard és páncél pótlása");
+        s.sendMessage("§e/banya rebirth §7- újjászületés: mindent nulláz és újrakezded");
         if (!admin) return;
         s.sendMessage("§c--- Admin (operátor) parancsok ---");
         s.sendMessage("§e/banya reload §7- config és zónák újratöltése");
@@ -1713,7 +1931,8 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
             case "help", "?" -> sendHelp(sender);
             case "info" -> sendInfo(p);
             case "mines" -> sendMines(p);
-            case "unlock" -> cmdUnlock(p);
+            case "unlock" -> openUnlockGui(p);
+            case "rebirth" -> cmdRebirth(p, args);
             case "shop" -> openShop(p);
             case "shards" -> p.sendMessage("§dVexShard egyenleged: §f" + fmt(getShards(p)));
             case "tp" -> teleportToZone(p, args.length >= 2 ? args[1].toLowerCase() : "");
@@ -1767,7 +1986,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         List<String> out = new ArrayList<>();
 
         if (args.length == 1) {
-            out.addAll(List.of("help", "mines", "unlock", "shop", "shards", "tp", "pvpmine", "tool"));
+            out.addAll(List.of("help", "mines", "unlock", "shop", "shards", "tp", "pvpmine", "tool", "rebirth"));
             if (admin) {
                 out.addAll(List.of("reload", "zones", "debug", "setregion", "setwarp", "setzone", "shard",
                         "setlevel", "addlevel", "settool", "reset"));
@@ -1779,6 +1998,7 @@ public class BanyaPlugin extends JavaPlugin implements Listener {
         if (args.length == 2) {
             switch (sub) {
                 case "tp" -> out.addAll(zoneNames());
+                case "rebirth" -> out.add("confirm");
                 case "setregion", "setwarp" -> {
                     if (admin) out.addAll(zoneNames());
                 }
