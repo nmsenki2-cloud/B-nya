@@ -69,6 +69,8 @@ public class BanyaExpansion extends PlaceholderExpansion {
                 return plugin.unlockedZoneDisplay(p);
             case "zone_number":
                 return String.valueOf(plugin.getUnlocked(p) + 1);
+            case "rebirths":
+                return String.valueOf(plugin.getRebirths(p));    
             default:
                 break;
         }
